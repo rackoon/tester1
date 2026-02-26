@@ -1,20 +1,18 @@
 <!doctype html>
-
-<html lang="en">
+<html lang="et">
 <head>
   <meta charset="utf-8">
-
-  <title>tester</title>
-  <meta name="description" content="tester">
-  <meta name="author" content="tester">
-
-  <!--[if lt IE 9]>
-  <script src="http://html5shiv.googlecode.com/svn/trunk/html5.js"></script>
-  <![endif]-->
+  <title>Planner Gate Control</title>
 </head>
-
 <body>
-<p>tester</p>
-<?php include 'footer.inc.php';?>
+  <h1>Planner Gate Control</h1>
+  <p>Liiklusplanner on töös. Ava <a href="admin.php">admin liides</a>.</p>
+  <h2>API</h2>
+  <ul>
+    <li>POST <code>api.php?action=plate-event</code> - Frigate ANPR sündmus</li>
+    <li>POST <code>api.php?action=phone-event</code> - VoIP kõne sündmus</li>
+    <li>GET <code>api.php?action=display-feed</code> - Android ekraani feed</li>
+  </ul>
+<?php include 'include/footer.inc.php'; ?>
 </body>
 </html>
