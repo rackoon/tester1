@@ -7,6 +7,7 @@ class PlannerService
     private const DEFAULT_DISPLAY_SUCCESS_PARKING = 'Suunata parklasse';
     private const DEFAULT_DISPLAY_SUCCESS_SERVICE = 'Suunata Service Lobby alale';
     private const DEFAULT_DISPLAY_FAILED = 'Sisenemine keelatud';
+    private const DEFAULT_AMPRON_STANDBY_TEXT = 'Service Lobby';
 
     public function __construct(private PDO $pdo, private array $config)
     {
@@ -274,6 +275,7 @@ class PlannerService
         $stmt->execute([$type, $value, $allowed ? 1 : 0, $zone, $reason, date(DATE_ATOM)]);
 
         $displayMessage = $this->buildDisplayMessage($allowed, $zone);
+        $this->triggerAmpronDisplay($type, $value, $allowed, $zone);
         return [
             'allowed' => $allowed,
             'zone' => $zone,
@@ -293,5 +295,111 @@ class PlannerService
         }
 
         return $this->getSetting('display_success_parking_text', self::DEFAULT_DISPLAY_SUCCESS_PARKING);
+    }
+
+    private function triggerAmpronDisplay(string $type, string $value, bool $allowed, ?string $zone): void
+    {
+        $enabled = $this->getSetting('ampron_enabled', '0') === '1';
+        if (!$enabled) {
+            return;
+        }
+
+        $baseUrl = trim($this->getSetting('ampron_base_url', (string)(($this->config['ampron'] ?? [])['base_url'] ?? '')));
+        $displayId = trim($this->getSetting('ampron_display_id', (string)(($this->config['ampron'] ?? [])['display_id'] ?? 'SERVICE_LOBBY')));
+        $username = trim($this->getSetting('ampron_username', (string)(($this->config['ampron'] ?? [])['username'] ?? '')));
+        $password = trim($this->getSetting('ampron_password', (string)(($this->config['ampron'] ?? [])['password'] ?? '')));
+        $timeout = max(1, (int)$this->getSetting('ampron_timeout', '3'));
+
+        if ($baseUrl === '' || $displayId === '') {
+            return;
+        }
+
+        $isServicePlate = $allowed && $zone === 'service_lobby' && $type === 'plate' && trim($value) !== '';
+        if ($isServicePlate) {
+            $layout = trim($this->getSetting('ampron_plate_layout', 'vehiclenumber'));
+            $field = trim($this->getSetting('ampron_plate_field', 'plate'));
+            $content = strtoupper(trim($value));
+            $extra = trim($this->getSetting('ampron_plate_extra_query', ''));
+        } else {
+            $layout = trim($this->getSetting('ampron_standby_layout', 'service_lobby'));
+            $field = trim($this->getSetting('ampron_standby_field', 'text'));
+            $content = $this->getSetting('ampron_standby_text', self::DEFAULT_AMPRON_STANDBY_TEXT);
+            $extra = trim($this->getSetting('ampron_standby_extra_query', ''));
+        }
+
+        if ($layout === '' || $field === '') {
+            return;
+        }
+
+        $query = [
+            'id' => $displayId,
+            'layout' => $layout,
+            $field => $content,
+        ];
+        foreach ($this->parseExtraQueryParams($extra) as $k => $v) {
+            $query[$k] = $v;
+        }
+
+        $this->ampronHttpGet($baseUrl, $query, $username, $password, $timeout);
+    }
+
+    private function parseExtraQueryParams(string $raw): array
+    {
+        if ($raw === '') {
+            return [];
+        }
+        $out = [];
+        parse_str($raw, $out);
+        if (!is_array($out)) {
+            return [];
+        }
+        $flat = [];
+        foreach ($out as $k => $v) {
+            if (!is_string($k) || $k === '') {
+                continue;
+            }
+            if (is_scalar($v) || $v === null) {
+                $flat[$k] = (string)$v;
+            }
+        }
+        return $flat;
+    }
+
+    private function ampronHttpGet(string $baseUrl, array $query, string $username, string $password, int $timeout): bool
+    {
+        if (!function_exists('curl_init')) {
+            return false;
+        }
+
+        $url = $this->normalizeAmpronEndpoint($baseUrl) . '?' . http_build_query($query, '', '&', PHP_QUERY_RFC3986);
+        $ch = curl_init($url);
+        if ($ch === false) {
+            return false;
+        }
+
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT => $timeout,
+            CURLOPT_CONNECTTIMEOUT => min(2, $timeout),
+            CURLOPT_FAILONERROR => false,
+        ]);
+        if ($username !== '' && $password !== '') {
+            curl_setopt($ch, CURLOPT_HTTPAUTH, CURLAUTH_ANY);
+            curl_setopt($ch, CURLOPT_USERPWD, $username . ':' . $password);
+        }
+        curl_exec($ch);
+        $code = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+        curl_close($ch);
+
+        return $code >= 200 && $code < 300;
+    }
+
+    private function normalizeAmpronEndpoint(string $baseUrl): string
+    {
+        $trimmed = rtrim($baseUrl, '/');
+        if (str_ends_with($trimmed, '/mlds')) {
+            return $trimmed;
+        }
+        return $trimmed . '/mlds';
     }
 }

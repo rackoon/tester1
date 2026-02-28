@@ -369,6 +369,74 @@ if (isset($_POST['save_display_monitor'])) {
     }
 }
 
+if (isset($_POST['save_ampron_display'])) {
+    $auth->requireRole(['admin']);
+    $enabled = !empty($_POST['ampron_enabled']) ? '1' : '0';
+    $baseUrl = trim((string)($_POST['ampron_base_url'] ?? ''));
+    $displayId = trim((string)($_POST['ampron_display_id'] ?? 'SERVICE_LOBBY'));
+    $standbyLayout = trim((string)($_POST['ampron_standby_layout'] ?? 'service_lobby'));
+    $standbyField = trim((string)($_POST['ampron_standby_field'] ?? 'text'));
+    $standbyText = trim((string)($_POST['ampron_standby_text'] ?? 'Service Lobby'));
+    $standbyExtra = trim((string)($_POST['ampron_standby_extra_query'] ?? ''));
+    $plateLayout = trim((string)($_POST['ampron_plate_layout'] ?? 'vehiclenumber'));
+    $plateField = trim((string)($_POST['ampron_plate_field'] ?? 'plate'));
+    $plateExtra = trim((string)($_POST['ampron_plate_extra_query'] ?? ''));
+    $username = trim((string)($_POST['ampron_username'] ?? ''));
+    $password = trim((string)($_POST['ampron_password'] ?? ''));
+    $timeout = trim((string)($_POST['ampron_timeout'] ?? '3'));
+
+    $nameRx = '/^[A-Za-z0-9_.:-]+$/';
+    $fieldRx = '/^[A-Za-z0-9_\\[\\].:-]+$/';
+
+    try {
+        if ($enabled === '1') {
+            if ($baseUrl === '' || !preg_match('#^https?://#i', $baseUrl)) {
+                throw new RuntimeException('Ampron baas URL peab algama http:// voi https://');
+            }
+            if ($displayId === '' || !preg_match($nameRx, $displayId)) {
+                throw new RuntimeException('Ampron display id sisaldab vigaseid marke');
+            }
+            if ($standbyLayout === '' || !preg_match($nameRx, $standbyLayout)) {
+                throw new RuntimeException('Standby layout on vigane');
+            }
+            if ($plateLayout === '' || !preg_match($nameRx, $plateLayout)) {
+                throw new RuntimeException('Plate layout on vigane');
+            }
+            if ($standbyField === '' || !preg_match($fieldRx, $standbyField)) {
+                throw new RuntimeException('Standby field on vigane');
+            }
+            if ($plateField === '' || !preg_match($fieldRx, $plateField)) {
+                throw new RuntimeException('Plate field on vigane');
+            }
+            if ($standbyText === '') {
+                throw new RuntimeException('Standby tekst on puudu');
+            }
+        }
+        if (!preg_match('/^\\d+$/', $timeout)) {
+            throw new RuntimeException('Ampron timeout peab olema taisarv sekundites');
+        }
+
+        setSetting($db->pdo(), 'ampron_enabled', $enabled);
+        setSetting($db->pdo(), 'ampron_base_url', $baseUrl);
+        setSetting($db->pdo(), 'ampron_display_id', $displayId);
+        setSetting($db->pdo(), 'ampron_standby_layout', $standbyLayout);
+        setSetting($db->pdo(), 'ampron_standby_field', $standbyField);
+        setSetting($db->pdo(), 'ampron_standby_text', $standbyText);
+        setSetting($db->pdo(), 'ampron_standby_extra_query', $standbyExtra);
+        setSetting($db->pdo(), 'ampron_plate_layout', $plateLayout);
+        setSetting($db->pdo(), 'ampron_plate_field', $plateField);
+        setSetting($db->pdo(), 'ampron_plate_extra_query', $plateExtra);
+        setSetting($db->pdo(), 'ampron_username', $username);
+        setSetting($db->pdo(), 'ampron_timeout', $timeout);
+        if ($password !== '') {
+            setSetting($db->pdo(), 'ampron_password', $password);
+        }
+        $flashSuccess = 'Ampron LED seaded salvestatud';
+    } catch (Throwable $e) {
+        $flashError = 'Ampron LED seadete salvestamine ebaonnestus: ' . $e->getMessage();
+    }
+}
+
 if (isset($_POST['save_sip_agent'])) {
     $auth->requireRole(['admin']);
     $enabled = !empty($_POST['sip_agent_enabled']) ? '1' : '0';
@@ -503,6 +571,19 @@ $displayDetectingText = getSetting($db->pdo(), 'display_detecting_text', 'Tuvast
 $displaySuccessParkingText = getSetting($db->pdo(), 'display_success_parking_text', 'Suunata parklasse');
 $displaySuccessServiceText = getSetting($db->pdo(), 'display_success_service_text', 'Suunata Service Lobby alale');
 $displayFailedText = getSetting($db->pdo(), 'display_failed_text', 'Sisenemine keelatud');
+$ampronEnabled = getSetting($db->pdo(), 'ampron_enabled', '0') === '1';
+$ampronBaseUrl = getSetting($db->pdo(), 'ampron_base_url', '');
+$ampronDisplayId = getSetting($db->pdo(), 'ampron_display_id', 'SERVICE_LOBBY');
+$ampronStandbyLayout = getSetting($db->pdo(), 'ampron_standby_layout', 'service_lobby');
+$ampronStandbyField = getSetting($db->pdo(), 'ampron_standby_field', 'text');
+$ampronStandbyText = getSetting($db->pdo(), 'ampron_standby_text', 'Service Lobby');
+$ampronStandbyExtraQuery = getSetting($db->pdo(), 'ampron_standby_extra_query', '');
+$ampronPlateLayout = getSetting($db->pdo(), 'ampron_plate_layout', 'vehiclenumber');
+$ampronPlateField = getSetting($db->pdo(), 'ampron_plate_field', 'plate');
+$ampronPlateExtraQuery = getSetting($db->pdo(), 'ampron_plate_extra_query', '');
+$ampronUsername = getSetting($db->pdo(), 'ampron_username', '');
+$ampronPassword = getSetting($db->pdo(), 'ampron_password', '');
+$ampronTimeout = getSetting($db->pdo(), 'ampron_timeout', '3');
 
 $sipAgentEnabled = getSetting($db->pdo(), 'sip_agent_enabled', '0') === '1';
 $plannerApiUrl = getSetting($db->pdo(), 'planner_api_url', 'https://one.crebit.eu/pln/api.php');
@@ -738,6 +819,40 @@ if ($sipAgentStatus === '') {
         <button name="save_display_monitor" value="1">Salvesta Android monitori seaded</button>
       </form>
       <p class="hint">Android monitor loeb neid tekste API endpointist <code>action=display-config</code>.</p>
+    </section>
+
+    <section class="card">
+      <h2>Ampron LED ekraan (Service Lobby)</h2>
+      <form method="post">
+        <label><input type="checkbox" name="ampron_enabled" value="1" style="width:auto" <?= $ampronEnabled ? 'checked' : '' ?>> Ampron tugi lubatud</label>
+        <label>Ampron baas URL</label>
+        <input name="ampron_base_url" value="<?= h($ampronBaseUrl) ?>" placeholder="http://DISPLAY_IP:9527 voi http://DISPLAY_IP:9527/mlds">
+        <label>Display ID (id=...)</label>
+        <input name="ampron_display_id" value="<?= h($ampronDisplayId) ?>" placeholder="SERVICE_LOBBY" required>
+        <label>Standby layout</label>
+        <input name="ampron_standby_layout" value="<?= h($ampronStandbyLayout) ?>" placeholder="service_lobby" required>
+        <label>Standby field (area nimi)</label>
+        <input name="ampron_standby_field" value="<?= h($ampronStandbyField) ?>" placeholder="text" required>
+        <label>Standby tekst</label>
+        <input name="ampron_standby_text" value="<?= h($ampronStandbyText) ?>" placeholder="Service Lobby" required>
+        <label>Standby extra query (valikuline)</label>
+        <input name="ampron_standby_extra_query" value="<?= h($ampronStandbyExtraQuery) ?>" placeholder="kiosk=21">
+        <label>Plate layout</label>
+        <input name="ampron_plate_layout" value="<?= h($ampronPlateLayout) ?>" placeholder="vehiclenumber" required>
+        <label>Plate field (area nimi)</label>
+        <input name="ampron_plate_field" value="<?= h($ampronPlateField) ?>" placeholder="plate" required>
+        <label>Plate extra query (valikuline)</label>
+        <input name="ampron_plate_extra_query" value="<?= h($ampronPlateExtraQuery) ?>" placeholder="kiosk=21">
+        <label>HTTP kasutaja (valikuline)</label>
+        <input name="ampron_username" value="<?= h($ampronUsername) ?>" placeholder="admin">
+        <label>HTTP parool (valikuline)</label>
+        <input name="ampron_password" type="password" value="" placeholder="<?= $ampronPassword !== '' ? 'Jata tuhjaks, et vana jaaks alles' : '' ?>">
+        <label>HTTP timeout (sek)</label>
+        <input name="ampron_timeout" value="<?= h($ampronTimeout) ?>" placeholder="3" required>
+        <button name="save_ampron_display" value="1">Salvesta Ampron LED seaded</button>
+      </form>
+      <p class="hint">PLN saadab automaatselt Ampron API-le GET paringu <code>/mlds?id=...&amp;layout=...&amp;FIELD=...</code>.</p>
+      <p class="hint">Kui otsus on <code>allowed + zone=service_lobby</code>, kuvatakse auto number. Muul juhul kuvatakse standby tekst.</p>
     </section>
 
     <section class="card">
