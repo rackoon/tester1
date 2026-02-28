@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8">
   <title>Planner Gate Control</title>
+  <link rel="icon" type="image/svg+xml" href="logo.svg">
 </head>
 <body>
   <h1>Planner Gate Control</h1>

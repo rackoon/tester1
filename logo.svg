@@ -1,0 +1,27 @@
+<svg width="200" height="60" viewBox="0 0 200 60" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="gradPln" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#14b8a6;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#2dd4bf;stop-opacity:1" />
+    </linearGradient>
+    <filter id="glowPln">
+      <feGaussianBlur stdDeviation="1.4" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <g filter="url(#glowPln)">
+    <!-- Gate-like icon + stylized P -->
+    <rect x="14" y="14" width="58" height="32" rx="8" stroke="url(#gradPln)" stroke-width="3"/>
+    <path d="M24 18 V42 H34 C42 42 48 36 48 30 C48 24 42 18 34 18 Z" fill="none" stroke="url(#gradPln)" stroke-width="3" stroke-linejoin="round"/>
+    <path d="M54 20 V40 M62 20 V40" stroke="url(#gradPln)" stroke-width="2.5" stroke-linecap="round"/>
+    <path d="M18 22 H68 M18 38 H68" stroke="url(#gradPln)" stroke-width="1" opacity="0.45" stroke-dasharray="4 4"/>
+  </g>
+
+  <g transform="translate(88, 43)">
+    <text font-family="sans-serif" font-weight="900" font-size="36" fill="url(#gradPln)" filter="url(#glowPln)" letter-spacing="2">PLN</text>
+  </g>
+</svg>

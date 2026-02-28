@@ -218,3 +218,6 @@ data/*.sqlite
 android/.gradle/
 android/app/build/
 android-sdk/
+runtime/
+scripts/__pycache__/
+down/*.apk

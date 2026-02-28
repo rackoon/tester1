@@ -2,7 +2,8 @@
 
 See kaust sisaldab valmis Android rakendust:
 - Kotlin + Jetpack Compose + Retrofit
-- pollib `GET /api.php?action=display-feed` iga 2 sekundi jarel
+- hoiab pusiuhendust `GET /api.php?action=display-stream` (SSE)
+- server saadab muutuse kohe, pollimist ei kasutata
 - kuvab viimast `display_message` vaartust suurelt
 - varvireeglid:
   - `Suunata Service Lobby alale` -> punane taust
@@ -28,5 +29,7 @@ APK asukoht:
 
 Vaikimisi kasutab app `http://10.0.2.2:8080` (Android emulator -> host masin).
 
-Kui kasutad fyysilist tahvlit/telefoni, muuda failis `app/build.gradle.kts` vaartust:
-- `buildConfigField("String", "API_BASE_URL", "\"http://SINU_SERVER:PORT\"")`
+Kui kasutad fyysilist tahvlit/telefoni:
+- vajuta avavaates ylemisel yhenduse tekstil
+- sisesta serveri baas-URL (naide `http://192.168.1.10:8080`)
+- app salvestab URL-i lokaalselt ja reconnectib automaatselt

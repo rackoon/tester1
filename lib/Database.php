@@ -57,13 +57,18 @@ CREATE TABLE IF NOT EXISTS entries (
     reason TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS app_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 SQL;
         $this->pdo->exec($sql);
 
         $count = (int)$this->pdo->query('SELECT COUNT(*) FROM users')->fetchColumn();
         if ($count === 0) {
             $stmt = $this->pdo->prepare('INSERT INTO users(username,password_hash,role,created_at) VALUES (?,?,?,?)');
-            $stmt->execute(['admin', password_hash('admin123', PASSWORD_DEFAULT), 'admin', date(DATE_ATOM)]);
+            $stmt->execute(['admin', password_hash('Tere1234', PASSWORD_DEFAULT), 'admin', date(DATE_ATOM)]);
         }
     }
 }
