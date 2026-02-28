@@ -81,6 +81,24 @@ function formatScheduleLabel(string $schedule): string
     return $s;
 }
 
+function isScheduleFormatValid(string $schedule): bool
+{
+    $s = trim(mb_strtoupper($schedule));
+    if ($s === '24/7') {
+        return true;
+    }
+
+    if (preg_match('/^WEEK:([1-7](?:,[1-7])*)\|TIME:(\d{2}:\d{2})-(\d{2}:\d{2})$/', $s)) {
+        return true;
+    }
+
+    if (preg_match('/^([EMTRLNPK]-[EMTRLNPK])\s+(\d{1,2})-(\d{1,2})$/u', $s)) {
+        return true;
+    }
+
+    return false;
+}
+
 function getSetting(PDO $pdo, string $key, string $default = ''): string
 {
     try {
@@ -213,15 +231,111 @@ if (isset($_POST['add_rule'])) {
     }
 }
 
+if (isset($_POST['add_exception'])) {
+    $auth->requireRole(['admin', 'operator']);
+    $name = trim((string)($_POST['exception_name'] ?? ''));
+    $inputType = (string)($_POST['exception_input_type'] ?? 'plate');
+    $zone = (string)($_POST['exception_zone'] ?? 'parking');
+    $schedule = trim((string)($_POST['exception_schedule'] ?? ''));
+    $enabled = !empty($_POST['exception_enabled']) ? 1 : 0;
+
+    if ($name === '') {
+        $flashError = 'Erandi nimi on puudu';
+    } elseif (!in_array($inputType, ['plate', 'phone'], true)) {
+        $flashError = 'Erandi sisendi tyyp on vigane';
+    } elseif (!in_array($zone, ['parking', 'service_lobby'], true)) {
+        $flashError = 'Erandi tsoon on vigane';
+    } elseif (!isScheduleFormatValid($schedule)) {
+        $flashError = 'Erandi ajagraafik on vigane';
+    } else {
+        try {
+            $now = date(DATE_ATOM);
+            $stmt = $db->pdo()->prepare(
+                "INSERT INTO access_exceptions(name,input_type,target,schedule,zone,enabled,created_at,updated_at)
+                 VALUES (?,?,?,?,?,?,?,?)"
+            );
+            $stmt->execute([$name, $inputType, 'no_permit', strtoupper($schedule), $zone, $enabled, $now, $now]);
+            $flashSuccess = 'Ajapohine erand lisatud';
+        } catch (Throwable $e) {
+            $flashError = 'Erandi lisamine ebaonnestus: ' . $e->getMessage();
+        }
+    }
+}
+
+if (isset($_POST['save_exception'])) {
+    $auth->requireRole(['admin', 'operator']);
+    $id = (int)($_POST['exception_id'] ?? 0);
+    $name = trim((string)($_POST['exception_name'] ?? ''));
+    $inputType = (string)($_POST['exception_input_type'] ?? 'plate');
+    $zone = (string)($_POST['exception_zone'] ?? 'parking');
+    $schedule = trim((string)($_POST['exception_schedule'] ?? ''));
+    $enabled = !empty($_POST['exception_enabled']) ? 1 : 0;
+
+    if ($id <= 0) {
+        $flashError = 'Erandi ID on vigane';
+    } elseif ($name === '') {
+        $flashError = 'Erandi nimi on puudu';
+    } elseif (!in_array($inputType, ['plate', 'phone'], true)) {
+        $flashError = 'Erandi sisendi tyyp on vigane';
+    } elseif (!in_array($zone, ['parking', 'service_lobby'], true)) {
+        $flashError = 'Erandi tsoon on vigane';
+    } elseif (!isScheduleFormatValid($schedule)) {
+        $flashError = 'Erandi ajagraafik on vigane';
+    } else {
+        try {
+            $stmt = $db->pdo()->prepare(
+                "UPDATE access_exceptions
+                 SET name=?, input_type=?, schedule=?, zone=?, enabled=?, updated_at=?
+                 WHERE id=?"
+            );
+            $stmt->execute([$name, $inputType, strtoupper($schedule), $zone, $enabled, date(DATE_ATOM), $id]);
+            $flashSuccess = 'Ajapohine erand uuendatud';
+        } catch (Throwable $e) {
+            $flashError = 'Erandi uuendamine ebaonnestus: ' . $e->getMessage();
+        }
+    }
+}
+
+if (isset($_POST['delete_exception'])) {
+    $auth->requireRole(['admin', 'operator']);
+    $id = (int)($_POST['exception_id'] ?? 0);
+    if ($id <= 0) {
+        $flashError = 'Erandi ID on vigane';
+    } else {
+        try {
+            $stmt = $db->pdo()->prepare('DELETE FROM access_exceptions WHERE id = ?');
+            $stmt->execute([$id]);
+            $flashSuccess = 'Ajapohine erand kustutatud';
+        } catch (Throwable $e) {
+            $flashError = 'Erandi kustutamine ebaonnestus: ' . $e->getMessage();
+        }
+    }
+}
+
 if (isset($_POST['save_shelly'])) {
     $auth->requireRole(['admin']);
     $baseUrl = trim((string)($_POST['shelly_base_url'] ?? ''));
     $username = trim((string)($_POST['shelly_username'] ?? ''));
     $password = trim((string)($_POST['shelly_password'] ?? ''));
+    $mode = strtolower(trim((string)($_POST['shelly_mode'] ?? 'auto')));
+    $switchId = trim((string)($_POST['shelly_switch_id'] ?? '0'));
+    $toggleAfter = trim((string)($_POST['shelly_toggle_after'] ?? '1'));
 
     try {
+        if (!in_array($mode, ['auto', 'rpc', 'relay'], true)) {
+            throw new RuntimeException('Shelly mode peab olema auto/rpc/relay');
+        }
+        if (!preg_match('/^\d+$/', $switchId)) {
+            throw new RuntimeException('Shelly switch id peab olema taisarv');
+        }
+        if (!preg_match('/^\d+$/', $toggleAfter)) {
+            throw new RuntimeException('Shelly toggle_after peab olema taisarv sekundites');
+        }
         setSetting($db->pdo(), 'shelly_base_url', $baseUrl);
         setSetting($db->pdo(), 'shelly_username', $username);
+        setSetting($db->pdo(), 'shelly_mode', $mode);
+        setSetting($db->pdo(), 'shelly_switch_id', $switchId);
+        setSetting($db->pdo(), 'shelly_toggle_after', $toggleAfter);
         if ($password !== '') {
             setSetting($db->pdo(), 'shelly_password', $password);
         }
@@ -352,6 +466,7 @@ if (!in_array($tab, $allowedTabs, true)) {
 }
 
 $rules = $db->pdo()->query('SELECT * FROM access_rules ORDER BY id DESC LIMIT 50')->fetchAll();
+$exceptions = $db->pdo()->query("SELECT * FROM access_exceptions ORDER BY id DESC")->fetchAll();
 $entries = $db->pdo()->query('SELECT * FROM entries ORDER BY id DESC LIMIT 20')->fetchAll();
 $users = $db->pdo()->query('SELECT id,username,role,created_at FROM users ORDER BY id DESC LIMIT 50')->fetchAll();
 
@@ -379,6 +494,9 @@ $shellyDefault = $config['shelly'] ?? [];
 $shellyBaseUrl = getSetting($db->pdo(), 'shelly_base_url', (string)($shellyDefault['base_url'] ?? ''));
 $shellyUsername = getSetting($db->pdo(), 'shelly_username', (string)($shellyDefault['username'] ?? ''));
 $shellyPassword = getSetting($db->pdo(), 'shelly_password', (string)($shellyDefault['password'] ?? ''));
+$shellyMode = getSetting($db->pdo(), 'shelly_mode', 'auto');
+$shellySwitchId = getSetting($db->pdo(), 'shelly_switch_id', '0');
+$shellyToggleAfter = getSetting($db->pdo(), 'shelly_toggle_after', '1');
 // Android display monitor texts.
 $displayStandbyText = getSetting($db->pdo(), 'display_standby_text', 'Ootan andmeid...');
 $displayDetectingText = getSetting($db->pdo(), 'display_detecting_text', 'Tuvastus kaib...');
@@ -532,6 +650,54 @@ if ($sipAgentStatus === '') {
       <?php endforeach; ?>
       </ul>
     </section>
+
+    <section class="card">
+      <h2>Ajapohised erandid</h2>
+      <form method="post">
+        <label>Erandi nimi</label>
+        <input name="exception_name" placeholder="Naiteks: E-L paevane sissepaas ilma loata" required>
+        <label>Tyyp</label>
+        <select name="exception_input_type">
+          <option value="plate">Auto nr</option>
+          <option value="phone">Telefon</option>
+        </select>
+        <label>Ajagraafik</label>
+        <input name="exception_schedule" placeholder="24/7 voi WEEK:1,2,3,4,5,6|TIME:08:00-19:00" required>
+        <label>Tsoon</label>
+        <select name="exception_zone">
+          <option value="parking">parking</option>
+          <option value="service_lobby">service_lobby</option>
+        </select>
+        <label><input type="checkbox" name="exception_enabled" value="1" style="width:auto" checked> Aktiivne</label>
+        <button name="add_exception" value="1">Lisa erand</button>
+      </form>
+      <hr style="margin:14px 0;border:0;border-top:1px solid #dbe2ea">
+      <?php foreach ($exceptions as $ex): ?>
+      <form method="post" style="padding:10px;border:1px solid #dbe2ea;border-radius:10px;margin-bottom:10px">
+        <input type="hidden" name="exception_id" value="<?= h((string)$ex['id']) ?>">
+        <label>Nimi</label>
+        <input name="exception_name" value="<?= h((string)$ex['name']) ?>" required>
+        <label>Tyyp</label>
+        <select name="exception_input_type">
+          <option value="plate" <?= $ex['input_type'] === 'plate' ? 'selected' : '' ?>>Auto nr</option>
+          <option value="phone" <?= $ex['input_type'] === 'phone' ? 'selected' : '' ?>>Telefon</option>
+        </select>
+        <label>Ajagraafik</label>
+        <input name="exception_schedule" value="<?= h((string)$ex['schedule']) ?>" required>
+        <label>Tsoon</label>
+        <select name="exception_zone">
+          <option value="parking" <?= $ex['zone'] === 'parking' ? 'selected' : '' ?>>parking</option>
+          <option value="service_lobby" <?= $ex['zone'] === 'service_lobby' ? 'selected' : '' ?>>service_lobby</option>
+        </select>
+        <label><input type="checkbox" name="exception_enabled" value="1" style="width:auto" <?= ((int)$ex['enabled'] === 1) ? 'checked' : '' ?>> Aktiivne</label>
+        <p class="hint">Siht: ilma loata (<?= h((string)$ex['target']) ?>) | Loodud: <?= h((string)$ex['created_at']) ?></p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button style="width:auto" name="save_exception" value="1">Salvesta muudatus</button>
+          <button style="width:auto;background:#b91c1c" name="delete_exception" value="1" onclick="return confirm('Kustutada erand?')">Kustuta</button>
+        </div>
+      </form>
+      <?php endforeach; ?>
+    </section>
   </div>
   <?php endif; ?>
 
@@ -577,12 +743,23 @@ if ($sipAgentStatus === '') {
     <section class="card">
       <h2>Shelly relee seadistus</h2>
       <form method="post">
-        <label>Shelly API URL</label>
-        <input name="shelly_base_url" value="<?= h($shellyBaseUrl) ?>" placeholder="http://shelly-ip/relay/0" required>
+        <label>Shelly baas URL</label>
+        <input name="shelly_base_url" value="<?= h($shellyBaseUrl) ?>" placeholder="http://shelly-ip" required>
+        <label>Shelly mode</label>
+        <select name="shelly_mode">
+          <option value="auto" <?= $shellyMode === 'auto' ? 'selected' : '' ?>>auto (proovi RPC, fallback relay)</option>
+          <option value="rpc" <?= $shellyMode === 'rpc' ? 'selected' : '' ?>>rpc (Shelly Pro/Gen2 soovituslik)</option>
+          <option value="relay" <?= $shellyMode === 'relay' ? 'selected' : '' ?>>relay (legacy Gen1)</option>
+        </select>
+        <label>Switch ID / Relay nr</label>
+        <input name="shelly_switch_id" value="<?= h($shellySwitchId) ?>" placeholder="0" required>
+        <label>toggle_after / timer (sek)</label>
+        <input name="shelly_toggle_after" value="<?= h($shellyToggleAfter) ?>" placeholder="1" required>
         <label>Kasutaja (valikuline)</label>
         <input name="shelly_username" value="<?= h($shellyUsername) ?>" placeholder="admin">
         <label>Parool (valikuline)</label>
         <input name="shelly_password" type="password" value="" placeholder="Jata tuhjaks, et vana jaaks alles">
+        <p class="hint">Shelly Pro 2PM jaoks kasuta tavaliselt: baas URL `http://SEADME_IP`, mode `rpc`, switch id `0` voi `1`.</p>
         <p class="hint">Kui paroolivaili tuhjaks jaatad, jaab eelmine parool alles.</p>
         <button name="save_shelly" value="1">Salvesta Shelly seaded</button>
       </form>

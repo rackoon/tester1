@@ -31,10 +31,12 @@ class PlannerService
         }
 
         if (!$rule) {
-            if ($type === 'plate' && $this->isUnidentifiedPlateAllowedNow()) {
-                $zone = 'parking';
+            $exception = $this->findMatchingException($type, $value);
+            if ($exception) {
+                $zone = (string)($exception['zone'] ?? 'parking');
                 $this->triggerGateOpen();
-                return $this->logDecision($type, $value, true, $zone, 'Ajapohine erand: E-L 08:00-19:00');
+                $reason = 'Ajapohine erand: ' . (string)($exception['name'] ?? 'nimetu');
+                return $this->logDecision($type, $value, true, $zone, $reason);
             }
             return $this->logDecision($type, $value, false, null, 'Luba puudub');
         }
@@ -49,18 +51,24 @@ class PlannerService
         return $this->logDecision($type, $value, true, $zone, 'Värav avatud');
     }
 
-    private function isUnidentifiedPlateAllowedNow(): bool
+    private function findMatchingException(string $type, string $value): ?array
     {
-        $day = (int)date('N'); // 1=Mon ... 7=Sun
-        if ($day < 1 || $day > 6) {
-            return false;
+        $stmt = $this->pdo->prepare(
+            "SELECT * FROM access_exceptions
+             WHERE enabled = 1
+               AND input_type = ?
+               AND target = 'no_permit'
+             ORDER BY id DESC"
+        );
+        $stmt->execute([$type]);
+        $rows = $stmt->fetchAll();
+        foreach ($rows as $row) {
+            $schedule = (string)($row['schedule'] ?? '');
+            if ($this->isScheduleAllowed($schedule)) {
+                return $row;
+            }
         }
-
-        $minutes = ((int)date('G')) * 60 + (int)date('i');
-        $start = 8 * 60;
-        $end = 19 * 60;
-
-        return $minutes >= $start && $minutes < $end;
+        return null;
     }
 
     private function findMatchingRule(string $type, string $value): ?array
@@ -162,19 +170,87 @@ class PlannerService
         $baseUrl = $this->getSetting('shelly_base_url', (string)($shelly['base_url'] ?? ''));
         $username = $this->getSetting('shelly_username', (string)($shelly['username'] ?? ''));
         $password = $this->getSetting('shelly_password', (string)($shelly['password'] ?? ''));
+        $mode = strtolower($this->getSetting('shelly_mode', 'auto'));
+        $switchIdRaw = $this->getSetting('shelly_switch_id', '0');
+        $toggleAfterRaw = $this->getSetting('shelly_toggle_after', '1');
 
         if ($baseUrl === '') {
             return;
         }
 
-        $url = rtrim($baseUrl, '/') . '?turn=on';
-        $opts = ['http' => ['method' => 'GET', 'timeout' => 2]];
-
-        if ($username !== '' && $password !== '') {
-            $opts['http']['header'] = 'Authorization: Basic ' . base64_encode($username . ':' . $password);
+        $switchId = max(0, (int)$switchIdRaw);
+        $toggleAfter = max(0, (int)$toggleAfterRaw);
+        if (!in_array($mode, ['auto', 'rpc', 'relay'], true)) {
+            $mode = 'auto';
         }
 
-        @file_get_contents($url, false, stream_context_create($opts));
+        if ($mode === 'rpc' || $mode === 'auto') {
+            if ($this->triggerShellyRpc($baseUrl, $switchId, $toggleAfter, $username, $password)) {
+                return;
+            }
+            if ($mode === 'rpc') {
+                return;
+            }
+        }
+
+        $this->triggerShellyRelay($baseUrl, $switchId, $toggleAfter, $username, $password);
+    }
+
+    private function triggerShellyRpc(string $baseUrl, int $switchId, int $toggleAfter, string $username, string $password): bool
+    {
+        $root = $this->normalizeShellyRootUrl($baseUrl);
+        $url = rtrim($root, '/') . '/rpc/Switch.Set?id=' . $switchId . '&on=true';
+        if ($toggleAfter > 0) {
+            $url .= '&toggle_after=' . $toggleAfter;
+        }
+        return $this->shellyHttpGet($url, $username, $password);
+    }
+
+    private function triggerShellyRelay(string $baseUrl, int $switchId, int $toggleAfter, string $username, string $password): bool
+    {
+        $trimmed = rtrim($baseUrl, '/');
+        if (preg_match('#/relay/\d+$#', $trimmed)) {
+            $url = $trimmed . '?turn=on';
+        } else {
+            $url = $this->normalizeShellyRootUrl($baseUrl) . '/relay/' . $switchId . '?turn=on';
+        }
+        if ($toggleAfter > 0) {
+            $url .= '&timer=' . $toggleAfter;
+        }
+        return $this->shellyHttpGet($url, $username, $password);
+    }
+
+    private function normalizeShellyRootUrl(string $baseUrl): string
+    {
+        $url = rtrim($baseUrl, '/');
+        $url = preg_replace('#/relay/\d+$#', '', $url) ?? $url;
+        $url = preg_replace('#/rpc/?$#', '', $url) ?? $url;
+        return rtrim($url, '/');
+    }
+
+    private function shellyHttpGet(string $url, string $username, string $password): bool
+    {
+        if (!function_exists('curl_init')) {
+            return false;
+        }
+        $ch = curl_init($url);
+        if ($ch === false) {
+            return false;
+        }
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT => 3,
+            CURLOPT_CONNECTTIMEOUT => 2,
+            CURLOPT_FAILONERROR => false,
+        ]);
+        if ($username !== '' && $password !== '') {
+            curl_setopt($ch, CURLOPT_HTTPAUTH, CURLAUTH_ANY);
+            curl_setopt($ch, CURLOPT_USERPWD, $username . ':' . $password);
+        }
+        curl_exec($ch);
+        $code = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+        curl_close($ch);
+        return $code >= 200 && $code < 300;
     }
 
     private function getSetting(string $key, string $default = ''): string

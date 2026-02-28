@@ -38,6 +38,18 @@ CREATE TABLE IF NOT EXISTS access_rules (
     created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS access_exceptions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    input_type TEXT NOT NULL,
+    target TEXT NOT NULL DEFAULT 'no_permit',
+    schedule TEXT NOT NULL,
+    zone TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS sip_clients (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
@@ -69,6 +81,25 @@ SQL;
         if ($count === 0) {
             $stmt = $this->pdo->prepare('INSERT INTO users(username,password_hash,role,created_at) VALUES (?,?,?,?)');
             $stmt->execute(['admin', password_hash('Tere1234', PASSWORD_DEFAULT), 'admin', date(DATE_ATOM)]);
+        }
+
+        $exCount = (int)$this->pdo->query('SELECT COUNT(*) FROM access_exceptions')->fetchColumn();
+        if ($exCount === 0) {
+            $stmt = $this->pdo->prepare(
+                'INSERT INTO access_exceptions(name,input_type,target,schedule,zone,enabled,created_at,updated_at)
+                 VALUES (?,?,?,?,?,?,?,?)'
+            );
+            $now = date(DATE_ATOM);
+            $stmt->execute([
+                'E-L 08:00-19:00 ilma loata',
+                'plate',
+                'no_permit',
+                'WEEK:1,2,3,4,5,6|TIME:08:00-19:00',
+                'parking',
+                1,
+                $now,
+                $now,
+            ]);
         }
     }
 }

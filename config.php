@@ -2,7 +2,7 @@
 return [
     'db_path' => __DIR__ . '/data/planner.sqlite',
     'shelly' => [
-        'base_url' => getenv('SHELLY_BASE_URL') ?: 'http://127.0.0.1/relay/0',
+        'base_url' => getenv('SHELLY_BASE_URL') ?: 'http://127.0.0.1',
         'username' => getenv('SHELLY_USER') ?: null,
         'password' => getenv('SHELLY_PASS') ?: null,
     ],
