@@ -8,6 +8,86 @@ function h(string $v): string
     return htmlspecialchars($v, ENT_QUOTES, 'UTF-8');
 }
 
+function supportedLanguages(): array
+{
+    return ['et', 'en', 'fi', 'sv', 'lv', 'lt'];
+}
+
+function loadTranslations(string $lang): array
+{
+    $fallback = __DIR__ . '/lang/et.php';
+    $base = file_exists($fallback) ? (require $fallback) : [];
+    $path = __DIR__ . '/lang/' . $lang . '.php';
+    if (!file_exists($path)) {
+        return $base;
+    }
+    $current = require $path;
+    if (!is_array($current)) {
+        return $base;
+    }
+    return array_merge($base, $current);
+}
+
+function t(string $key): string
+{
+    global $translations;
+    return (string)($translations[$key] ?? $key);
+}
+
+function tr(string $key, array $vars = []): string
+{
+    $text = t($key);
+    foreach ($vars as $name => $value) {
+        $text = str_replace('{' . $name . '}', (string)$value, $text);
+    }
+    return $text;
+}
+
+function decisionLabel(bool $allowed): string
+{
+    return $allowed ? t('decision_allowed') : t('decision_denied');
+}
+
+function reasonLabel(string $reasonRaw): string
+{
+    $reasonRaw = trim($reasonRaw);
+    if ($reasonRaw === '') {
+        return '';
+    }
+
+    if (str_starts_with($reasonRaw, 'exception_time_based|')) {
+        $name = trim(substr($reasonRaw, strlen('exception_time_based|')));
+        if ($name === '') {
+            $name = t('reason_unnamed');
+        }
+        return tr('reason_exception_time_based', ['name' => $name]);
+    }
+
+    $map = [
+        'permit_missing' => 'reason_permit_missing',
+        'permit_outside_schedule' => 'reason_permit_outside_schedule',
+        'gate_opened' => 'reason_gate_opened',
+        // Backward compatibility for old Estonian reasons already in DB.
+        'Luba puudub' => 'reason_permit_missing',
+        'Luba ei kehti sellel ajal' => 'reason_permit_outside_schedule',
+        'Värav avatud' => 'reason_gate_opened',
+    ];
+
+    if (isset($map[$reasonRaw])) {
+        return t($map[$reasonRaw]);
+    }
+
+    if (str_starts_with($reasonRaw, 'Ajapohine erand: ')) {
+        $name = trim(substr($reasonRaw, strlen('Ajapohine erand: ')));
+        if ($name === '') {
+            $name = t('reason_unnamed');
+        }
+        return tr('reason_exception_time_based', ['name' => $name]);
+    }
+
+    return $reasonRaw;
+}
+
 function normalizeScheduleFromPost(array $post): array
 {
     $is247 = !empty($post['schedule_247']);
@@ -123,6 +203,19 @@ function setSetting(PDO $pdo, string $key, string $value): void
 $config = require __DIR__ . '/config.php';
 $db = new Database($config);
 $auth = new Auth($db->pdo());
+$supportedLangs = supportedLanguages();
+$lang = (string)($_GET['lang'] ?? ($_COOKIE['pln_lang'] ?? 'et'));
+if (!in_array($lang, $supportedLangs, true)) {
+    $lang = 'et';
+}
+if (isset($_GET['lang']) && in_array((string)$_GET['lang'], $supportedLangs, true)) {
+    setcookie('pln_lang', $lang, [
+        'expires' => time() + 31536000,
+        'path' => '/',
+        'samesite' => 'Lax',
+    ]);
+}
+$translations = loadTranslations($lang);
 
 $flashError = null;
 $flashSuccess = null;
@@ -131,7 +224,7 @@ $testCaseResult = null;
 if (isset($_POST['login'])) {
     $ok = $auth->login($_POST['username'] ?? '', $_POST['password'] ?? '');
     if (!$ok) {
-        $flashError = 'Vale kasutajanimi voi parool';
+        $flashError = t('flash_login_failed');
     }
 }
 
@@ -145,10 +238,10 @@ $user = $auth->user();
 if (!$user):
 ?>
 <!doctype html>
-<html lang="et">
+<html lang="<?= h($lang) ?>">
 <head>
   <meta charset="utf-8">
-  <title>Planner</title>
+  <title><?= h(t('app_title')) ?></title>
   <link rel="icon" type="image/svg+xml" href="logo.svg">
   <style>
     *{box-sizing:border-box}
@@ -181,13 +274,13 @@ if (!$user):
 <div class="card">
   <div class="brand">
     <img src="logo.svg" alt="Planner logo">
-    <h1>Planner</h1>
+    <h1><?= h(t('app_title')) ?></h1>
   </div>
   <?php if (!empty($flashError)): ?><p class="err"><?= h($flashError) ?></p><?php endif; ?>
   <form method="post">
-    <input name="username" placeholder="Kasutajanimi" required>
-    <input name="password" type="password" placeholder="Parool" required>
-    <button name="login" value="1">Logi sisse</button>
+    <input name="username" placeholder="<?= h(t('username')) ?>" required>
+    <input name="password" type="password" placeholder="<?= h(t('password')) ?>" required>
+    <button name="login" value="1"><?= h(t('login')) ?></button>
   </form>
 </div>
 </body>
@@ -203,11 +296,11 @@ if (isset($_POST['add_rule'])) {
     $zone = (string)($_POST['zone'] ?? 'parking');
 
     if (!in_array($subjectType, ['plate', 'phone'], true)) {
-        $flashError = 'Vigane sisendi tyyp';
+        $flashError = t('flash_invalid_input_type');
     } elseif ($subjectValue === '') {
-        $flashError = 'Subjekti vaartus on puudu';
+        $flashError = t('flash_missing_subject_value');
     } elseif (!in_array($zone, ['parking', 'service_lobby'], true)) {
-        $flashError = 'Vigane tsoon';
+        $flashError = t('flash_invalid_zone');
     } else {
         $sch = normalizeScheduleFromPost($_POST);
         if (!$sch['ok']) {
@@ -223,9 +316,9 @@ if (isset($_POST['add_rule'])) {
                     'local',
                     date(DATE_ATOM),
                 ]);
-                $flashSuccess = 'Ligipaasu luba salvestatud';
+                $flashSuccess = t('flash_permit_saved');
             } catch (Throwable $e) {
-                $flashError = 'Salvestamine ebaonnestus: ' . $e->getMessage();
+                $flashError = tr('flash_save_failed_details', ['error' => $e->getMessage()]);
             }
         }
     }
@@ -240,13 +333,13 @@ if (isset($_POST['add_exception'])) {
     $enabled = !empty($_POST['exception_enabled']) ? 1 : 0;
 
     if ($name === '') {
-        $flashError = 'Erandi nimi on puudu';
+        $flashError = t('flash_exception_name_missing');
     } elseif (!in_array($inputType, ['plate', 'phone'], true)) {
-        $flashError = 'Erandi sisendi tyyp on vigane';
+        $flashError = t('flash_exception_input_invalid');
     } elseif (!in_array($zone, ['parking', 'service_lobby'], true)) {
-        $flashError = 'Erandi tsoon on vigane';
+        $flashError = t('flash_exception_zone_invalid');
     } elseif (!isScheduleFormatValid($schedule)) {
-        $flashError = 'Erandi ajagraafik on vigane';
+        $flashError = t('flash_exception_schedule_invalid');
     } else {
         try {
             $now = date(DATE_ATOM);
@@ -255,9 +348,9 @@ if (isset($_POST['add_exception'])) {
                  VALUES (?,?,?,?,?,?,?,?)"
             );
             $stmt->execute([$name, $inputType, 'no_permit', strtoupper($schedule), $zone, $enabled, $now, $now]);
-            $flashSuccess = 'Ajapohine erand lisatud';
+            $flashSuccess = t('flash_exception_added');
         } catch (Throwable $e) {
-            $flashError = 'Erandi lisamine ebaonnestus: ' . $e->getMessage();
+            $flashError = tr('flash_exception_add_failed_details', ['error' => $e->getMessage()]);
         }
     }
 }
@@ -272,15 +365,15 @@ if (isset($_POST['save_exception'])) {
     $enabled = !empty($_POST['exception_enabled']) ? 1 : 0;
 
     if ($id <= 0) {
-        $flashError = 'Erandi ID on vigane';
+        $flashError = t('flash_exception_id_invalid');
     } elseif ($name === '') {
-        $flashError = 'Erandi nimi on puudu';
+        $flashError = t('flash_exception_name_missing');
     } elseif (!in_array($inputType, ['plate', 'phone'], true)) {
-        $flashError = 'Erandi sisendi tyyp on vigane';
+        $flashError = t('flash_exception_input_invalid');
     } elseif (!in_array($zone, ['parking', 'service_lobby'], true)) {
-        $flashError = 'Erandi tsoon on vigane';
+        $flashError = t('flash_exception_zone_invalid');
     } elseif (!isScheduleFormatValid($schedule)) {
-        $flashError = 'Erandi ajagraafik on vigane';
+        $flashError = t('flash_exception_schedule_invalid');
     } else {
         try {
             $stmt = $db->pdo()->prepare(
@@ -289,9 +382,9 @@ if (isset($_POST['save_exception'])) {
                  WHERE id=?"
             );
             $stmt->execute([$name, $inputType, strtoupper($schedule), $zone, $enabled, date(DATE_ATOM), $id]);
-            $flashSuccess = 'Ajapohine erand uuendatud';
+            $flashSuccess = t('flash_exception_updated');
         } catch (Throwable $e) {
-            $flashError = 'Erandi uuendamine ebaonnestus: ' . $e->getMessage();
+            $flashError = tr('flash_exception_update_failed_details', ['error' => $e->getMessage()]);
         }
     }
 }
@@ -300,14 +393,14 @@ if (isset($_POST['delete_exception'])) {
     $auth->requireRole(['admin', 'operator']);
     $id = (int)($_POST['exception_id'] ?? 0);
     if ($id <= 0) {
-        $flashError = 'Erandi ID on vigane';
+        $flashError = t('flash_exception_id_invalid');
     } else {
         try {
             $stmt = $db->pdo()->prepare('DELETE FROM access_exceptions WHERE id = ?');
             $stmt->execute([$id]);
-            $flashSuccess = 'Ajapohine erand kustutatud';
+            $flashSuccess = t('flash_exception_deleted');
         } catch (Throwable $e) {
-            $flashError = 'Erandi kustutamine ebaonnestus: ' . $e->getMessage();
+            $flashError = tr('flash_exception_delete_failed_details', ['error' => $e->getMessage()]);
         }
     }
 }
@@ -323,13 +416,13 @@ if (isset($_POST['save_shelly'])) {
 
     try {
         if (!in_array($mode, ['auto', 'rpc', 'relay'], true)) {
-            throw new RuntimeException('Shelly mode peab olema auto/rpc/relay');
+            throw new RuntimeException(t('flash_shelly_mode_invalid'));
         }
         if (!preg_match('/^\d+$/', $switchId)) {
-            throw new RuntimeException('Shelly switch id peab olema taisarv');
+            throw new RuntimeException(t('flash_shelly_switch_invalid'));
         }
         if (!preg_match('/^\d+$/', $toggleAfter)) {
-            throw new RuntimeException('Shelly toggle_after peab olema taisarv sekundites');
+            throw new RuntimeException(t('flash_shelly_toggle_invalid'));
         }
         setSetting($db->pdo(), 'shelly_base_url', $baseUrl);
         setSetting($db->pdo(), 'shelly_username', $username);
@@ -339,9 +432,9 @@ if (isset($_POST['save_shelly'])) {
         if ($password !== '') {
             setSetting($db->pdo(), 'shelly_password', $password);
         }
-        $flashSuccess = 'Shelly seaded salvestatud';
+        $flashSuccess = t('flash_shelly_saved');
     } catch (Throwable $e) {
-        $flashError = 'Shelly seadete salvestamine ebaonnestus: ' . $e->getMessage();
+        $flashError = tr('flash_shelly_save_failed_details', ['error' => $e->getMessage()]);
     }
 }
 
@@ -354,7 +447,7 @@ if (isset($_POST['save_display_monitor'])) {
     $failedText = trim((string)($_POST['display_failed_text'] ?? 'Sisenemine keelatud'));
 
     if ($standbyText === '' || $detectingText === '' || $successParkingText === '' || $successServiceText === '' || $failedText === '') {
-        $flashError = 'Koik Android monitori tekstid peavad olema taidetud';
+        $flashError = t('flash_android_texts_required');
     } else {
         try {
             setSetting($db->pdo(), 'display_standby_text', $standbyText);
@@ -362,9 +455,9 @@ if (isset($_POST['save_display_monitor'])) {
             setSetting($db->pdo(), 'display_success_parking_text', $successParkingText);
             setSetting($db->pdo(), 'display_success_service_text', $successServiceText);
             setSetting($db->pdo(), 'display_failed_text', $failedText);
-            $flashSuccess = 'Android monitori seaded salvestatud';
+            $flashSuccess = t('flash_android_saved');
         } catch (Throwable $e) {
-            $flashError = 'Android monitori seadete salvestamine ebaonnestus: ' . $e->getMessage();
+            $flashError = tr('flash_android_save_failed_details', ['error' => $e->getMessage()]);
         }
     }
 }
@@ -391,29 +484,29 @@ if (isset($_POST['save_ampron_display'])) {
     try {
         if ($enabled === '1') {
             if ($baseUrl === '' || !preg_match('#^https?://#i', $baseUrl)) {
-                throw new RuntimeException('Ampron baas URL peab algama http:// voi https://');
+                throw new RuntimeException(t('flash_ampron_base_url_invalid'));
             }
             if ($displayId === '' || !preg_match($nameRx, $displayId)) {
-                throw new RuntimeException('Ampron display id sisaldab vigaseid marke');
+                throw new RuntimeException(t('flash_ampron_display_id_invalid'));
             }
             if ($standbyLayout === '' || !preg_match($nameRx, $standbyLayout)) {
-                throw new RuntimeException('Standby layout on vigane');
+                throw new RuntimeException(t('flash_ampron_standby_layout_invalid'));
             }
             if ($plateLayout === '' || !preg_match($nameRx, $plateLayout)) {
-                throw new RuntimeException('Plate layout on vigane');
+                throw new RuntimeException(t('flash_ampron_plate_layout_invalid'));
             }
             if ($standbyField === '' || !preg_match($fieldRx, $standbyField)) {
-                throw new RuntimeException('Standby field on vigane');
+                throw new RuntimeException(t('flash_ampron_standby_field_invalid'));
             }
             if ($plateField === '' || !preg_match($fieldRx, $plateField)) {
-                throw new RuntimeException('Plate field on vigane');
+                throw new RuntimeException(t('flash_ampron_plate_field_invalid'));
             }
             if ($standbyText === '') {
-                throw new RuntimeException('Standby tekst on puudu');
+                throw new RuntimeException(t('flash_ampron_standby_text_missing'));
             }
         }
         if (!preg_match('/^\\d+$/', $timeout)) {
-            throw new RuntimeException('Ampron timeout peab olema taisarv sekundites');
+            throw new RuntimeException(t('flash_ampron_timeout_invalid'));
         }
 
         setSetting($db->pdo(), 'ampron_enabled', $enabled);
@@ -431,9 +524,9 @@ if (isset($_POST['save_ampron_display'])) {
         if ($password !== '') {
             setSetting($db->pdo(), 'ampron_password', $password);
         }
-        $flashSuccess = 'Ampron LED seaded salvestatud';
+        $flashSuccess = t('flash_ampron_saved');
     } catch (Throwable $e) {
-        $flashError = 'Ampron LED seadete salvestamine ebaonnestus: ' . $e->getMessage();
+        $flashError = tr('flash_ampron_save_failed_details', ['error' => $e->getMessage()]);
     }
 }
 
@@ -450,7 +543,7 @@ if (isset($_POST['save_sip_agent'])) {
     $sipRegint = trim((string)($_POST['sip_regint'] ?? '300'));
 
     if (!in_array($sipTransport, ['udp', 'tcp', 'tls'], true)) {
-        $flashError = 'SIP transport peab olema udp/tcp/tls';
+        $flashError = t('flash_sip_transport_invalid');
     } else {
         try {
             setSetting($db->pdo(), 'sip_agent_enabled', $enabled);
@@ -464,9 +557,9 @@ if (isset($_POST['save_sip_agent'])) {
             setSetting($db->pdo(), 'sip_display_name', $sipDisplay);
             setSetting($db->pdo(), 'sip_outbound', $sipOutbound);
             setSetting($db->pdo(), 'sip_regint', $sipRegint);
-            $flashSuccess = 'SIP agendi seaded salvestatud';
+            $flashSuccess = t('flash_sip_saved');
         } catch (Throwable $e) {
-            $flashError = 'SIP agendi seadete salvestamine ebaonnestus: ' . $e->getMessage();
+            $flashError = tr('flash_sip_save_failed_details', ['error' => $e->getMessage()]);
         }
     }
 }
@@ -478,9 +571,9 @@ if (isset($_POST['test_case'])) {
     $hasReservation = !empty($_POST['test_has_reservation']);
 
     if (!in_array($testType, ['plate', 'phone'], true)) {
-        $flashError = 'Test case tyyp on vigane';
+        $flashError = t('flash_test_type_invalid');
     } elseif ($testValue === '') {
-        $flashError = 'Test case vaartus on puudu';
+        $flashError = t('flash_test_value_missing');
     } else {
         try {
             $service = new PlannerService($db->pdo(), $config);
@@ -490,9 +583,9 @@ if (isset($_POST['test_case'])) {
                 $res = $service->processPlate($testValue, $hasReservation);
             }
             $testCaseResult = $res;
-            $flashSuccess = 'Test case toodeldud';
+            $flashSuccess = t('flash_test_processed');
         } catch (Throwable $e) {
-            $flashError = 'Test case ebaonnestus: ' . $e->getMessage();
+            $flashError = tr('flash_test_failed_details', ['error' => $e->getMessage()]);
         }
     }
 }
@@ -504,9 +597,9 @@ if (isset($_POST['sip_agent_action'])) {
         $cmd = 'cd ' . escapeshellarg(__DIR__) . ' && ./scripts/manage_sip_agent.sh ' . escapeshellarg($action) . ' 2>&1';
         $out = shell_exec($cmd);
         if ($out === null) {
-            $flashError = 'SIP agendi haldus ei ole serveris lubatud (shell_exec disabled?)';
+            $flashError = t('flash_sip_manage_disabled');
         } else {
-            $flashSuccess = 'SIP agent: ' . trim($out);
+            $flashSuccess = tr('flash_sip_manage_result', ['result' => trim($out)]);
         }
     }
 }
@@ -521,9 +614,9 @@ if (isset($_POST['add_user'])) {
             $_POST['role'],
             date(DATE_ATOM),
         ]);
-        $flashSuccess = 'Kasutaja lisatud';
+        $flashSuccess = t('flash_user_added');
     } catch (Throwable $e) {
-        $flashError = 'Kasutaja lisamine ebaonnestus: ' . $e->getMessage();
+        $flashError = tr('flash_user_add_failed_details', ['error' => $e->getMessage()]);
     }
 }
 
@@ -531,6 +624,16 @@ $tab = (string)($_GET['tab'] ?? 'dashboard');
 $allowedTabs = ['dashboard', 'users', 'permits', 'settings', 'logs'];
 if (!in_array($tab, $allowedTabs, true)) {
     $tab = 'dashboard';
+}
+$permitsTab = (string)($_GET['permits_tab'] ?? ($_POST['permits_tab'] ?? 'new_permit'));
+$allowedPermitsTabs = ['new_permit', 'permits_list', 'exceptions'];
+if (!in_array($permitsTab, $allowedPermitsTabs, true)) {
+    $permitsTab = 'new_permit';
+}
+$settingsTab = (string)($_GET['settings_tab'] ?? ($_POST['settings_tab'] ?? 'test_case'));
+$allowedSettingsTabs = ['test_case', 'android_monitor', 'ampron_led', 'shelly', 'sip_agent'];
+if (!in_array($settingsTab, $allowedSettingsTabs, true)) {
+    $settingsTab = 'test_case';
 }
 
 $rules = $db->pdo()->query('SELECT * FROM access_rules ORDER BY id DESC LIMIT 50')->fetchAll();
@@ -565,7 +668,7 @@ $shellyPassword = getSetting($db->pdo(), 'shelly_password', (string)($shellyDefa
 $shellyMode = getSetting($db->pdo(), 'shelly_mode', 'auto');
 $shellySwitchId = getSetting($db->pdo(), 'shelly_switch_id', '0');
 $shellyToggleAfter = getSetting($db->pdo(), 'shelly_toggle_after', '1');
-// Android display monitor texts.
+// Android display monitor text defaults/settings.
 $displayStandbyText = getSetting($db->pdo(), 'display_standby_text', 'Ootan andmeid...');
 $displayDetectingText = getSetting($db->pdo(), 'display_detecting_text', 'Tuvastus kaib...');
 $displaySuccessParkingText = getSetting($db->pdo(), 'display_success_parking_text', 'Suunata parklasse');
@@ -601,10 +704,10 @@ if ($sipAgentStatus === '') {
 }
 ?>
 <!doctype html>
-<html lang="et">
+<html lang="<?= h($lang) ?>">
 <head>
   <meta charset="utf-8">
-  <title>Planner</title>
+  <title><?= h(t('app_title')) ?></title>
   <link rel="icon" type="image/svg+xml" href="logo.svg">
   <style>
     :root{--bg:#f6f8fb;--card:#fff;--txt:#0f172a;--muted:#475569;--ok:#065f46;--err:#b91c1c;--line:#dbe2ea;--pri:#0f766e}
@@ -637,6 +740,28 @@ if ($sipAgentStatus === '') {
     .kpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px}
     .kpi .card h2{font-size:14px;color:var(--muted);margin-bottom:8px}
     .kpi .value{font-size:28px;font-weight:700}
+    .settings-layout{display:grid;grid-template-columns:240px 1fr;gap:14px;align-items:start}
+    .settings-menu{position:sticky;top:16px}
+    .settings-menu .menu-link{
+      display:block;
+      padding:10px 12px;
+      border-radius:10px;
+      border:1px solid #cbd5e1;
+      background:#fff;
+      color:#0f172a;
+      text-decoration:none;
+      margin-bottom:8px;
+      font-weight:600;
+    }
+    .settings-menu .menu-link.active{
+      background:#0f766e;
+      color:#fff;
+      border-color:#0f766e;
+    }
+    @media (max-width: 900px){
+      .settings-layout{grid-template-columns:1fr}
+      .settings-menu{position:static}
+    }
   </style>
 </head>
 <body>
@@ -644,30 +769,47 @@ if ($sipAgentStatus === '') {
   <div class="top">
     <div class="brand">
       <img src="logo.svg" alt="Planner logo">
-      <h1>Planner</h1>
+      <h1><?= h(t('app_title')) ?></h1>
     </div>
-    <p>Sisse logitud: <strong><?= h($user['username']) ?></strong> (<?= h($user['role']) ?>) - <a href="?logout=1">Logi valja</a></p>
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end">
+      <form method="get" style="display:flex;align-items:center;gap:8px;margin:0">
+        <input type="hidden" name="tab" value="<?= h($tab) ?>">
+        <?php if ($tab === 'permits'): ?><input type="hidden" name="permits_tab" value="<?= h($permitsTab) ?>"><?php endif; ?>
+        <?php if ($tab === 'settings'): ?><input type="hidden" name="settings_tab" value="<?= h($settingsTab) ?>"><?php endif; ?>
+        <?php if ($tab === 'logs'): ?><input type="hidden" name="page" value="<?= h((string)$logsPage) ?>"><?php endif; ?>
+        <label for="lang" style="margin:0"><?= h(t('language')) ?></label>
+        <select id="lang" name="lang" onchange="this.form.submit()" style="width:auto;min-width:120px">
+          <option value="et" <?= $lang === 'et' ? 'selected' : '' ?>>Eesti</option>
+          <option value="en" <?= $lang === 'en' ? 'selected' : '' ?>>English</option>
+          <option value="fi" <?= $lang === 'fi' ? 'selected' : '' ?>>Suomi</option>
+          <option value="sv" <?= $lang === 'sv' ? 'selected' : '' ?>>Svenska</option>
+          <option value="lv" <?= $lang === 'lv' ? 'selected' : '' ?>>Latviesu</option>
+          <option value="lt" <?= $lang === 'lt' ? 'selected' : '' ?>>Lietuviu</option>
+        </select>
+      </form>
+      <p style="margin:0"><strong><?= h($user['username']) ?></strong> (<?= h($user['role']) ?>) - <a href="?logout=1"><?= h(t('logout')) ?></a></p>
+    </div>
   </div>
 
   <?php if ($flashSuccess): ?><div class="flash-ok"><?= h($flashSuccess) ?></div><?php endif; ?>
   <?php if ($flashError): ?><div class="flash-err"><?= h($flashError) ?></div><?php endif; ?>
 
   <nav class="tabs">
-    <a class="tab <?= $tab === 'dashboard' ? 'active' : '' ?>" href="?tab=dashboard">Dashboard</a>
-    <a class="tab <?= $tab === 'users' ? 'active' : '' ?>" href="?tab=users">Kasutajad</a>
-    <a class="tab <?= $tab === 'permits' ? 'active' : '' ?>" href="?tab=permits">Load</a>
-    <a class="tab <?= $tab === 'settings' ? 'active' : '' ?>" href="?tab=settings">Seaded</a>
-    <a class="tab <?= $tab === 'logs' ? 'active' : '' ?>" href="?tab=logs">Logid</a>
+    <a class="tab <?= $tab === 'dashboard' ? 'active' : '' ?>" href="?tab=dashboard"><?= h(t('menu_dashboard')) ?></a>
+    <a class="tab <?= $tab === 'users' ? 'active' : '' ?>" href="?tab=users"><?= h(t('menu_users')) ?></a>
+    <a class="tab <?= $tab === 'permits' ? 'active' : '' ?>" href="?tab=permits"><?= h(t('menu_permits')) ?></a>
+    <a class="tab <?= $tab === 'settings' ? 'active' : '' ?>" href="?tab=settings"><?= h(t('menu_settings')) ?></a>
+    <a class="tab <?= $tab === 'logs' ? 'active' : '' ?>" href="?tab=logs"><?= h(t('menu_logs')) ?></a>
   </nav>
 
   <?php if ($tab === 'dashboard'): ?>
   <section class="kpi">
-    <article class="card"><h2>Lube</h2><div class="value"><?= h((string)$stats['rules']) ?></div></article>
-    <article class="card"><h2>Logikirjeid</h2><div class="value"><?= h((string)$stats['entries']) ?></div></article>
+    <article class="card"><h2><?= h(t('dashboard_permits')) ?></h2><div class="value"><?= h((string)$stats['rules']) ?></div></article>
+    <article class="card"><h2><?= h(t('dashboard_log_entries')) ?></h2><div class="value"><?= h((string)$stats['entries']) ?></div></article>
   </section>
   <div class="grid" style="margin-top:14px">
     <section class="card">
-      <h2>Viimased load</h2>
+      <h2><?= h(t('dashboard_recent_permits')) ?></h2>
       <ul>
       <?php foreach (array_slice($rules, 0, 10) as $r): ?>
         <li><span class="pill"><?= h($r['subject_type']) ?></span> <?= h($r['subject_value']) ?> | <?= h(formatScheduleLabel((string)$r['schedule'])) ?></li>
@@ -675,10 +817,10 @@ if ($sipAgentStatus === '') {
       </ul>
     </section>
     <section class="card">
-      <h2>Viimased sisenemised</h2>
+      <h2><?= h(t('dashboard_recent_entries')) ?></h2>
       <ul>
       <?php foreach ($entries as $e): ?>
-        <li><?= h($e['created_at']) ?> - <?= h($e['input_type']) ?>:<?= h($e['input_value']) ?> => <?= $e['allowed'] ? 'ALLOWED' : 'DENIED' ?></li>
+      <li><?= h($e['created_at']) ?> - <?= h($e['input_type']) ?>:<?= h($e['input_value']) ?> => <?= h(decisionLabel((int)$e['allowed'] === 1)) ?> (<?= h(reasonLabel((string)($e['reason'] ?? ''))) ?>)</li>
       <?php endforeach; ?>
       </ul>
     </section>
@@ -686,234 +828,277 @@ if ($sipAgentStatus === '') {
   <?php endif; ?>
 
   <?php if ($tab === 'permits'): ?>
-  <div class="grid">
-    <section class="card">
-      <h2>Uus ligipaasu luba</h2>
-      <form method="post" id="ruleForm">
-        <label>Tyyp</label>
-        <select name="subject_type">
-          <option value="plate">Auto nr</option>
-          <option value="phone">Telefon</option>
-        </select>
-        <label>Vaartus</label>
-        <input name="subject_value" placeholder="ABC123 voi +372..." required>
-        <label>Tsoon</label>
-        <select name="zone">
-          <option value="parking">parking</option>
-          <option value="service_lobby">service_lobby</option>
-        </select>
-        <label><input type="checkbox" id="schedule247" name="schedule_247" value="1" checked style="width:auto"> 24/7</label>
-        <div id="customSchedule" style="display:none">
-          <label>Paevad</label>
-          <div class="days">
-            <label class="day"><input type="checkbox" name="days[]" value="1">E</label>
-            <label class="day"><input type="checkbox" name="days[]" value="2">T</label>
-            <label class="day"><input type="checkbox" name="days[]" value="3">K</label>
-            <label class="day"><input type="checkbox" name="days[]" value="4">N</label>
-            <label class="day"><input type="checkbox" name="days[]" value="5">R</label>
-            <label class="day"><input type="checkbox" name="days[]" value="6">L</label>
-            <label class="day"><input type="checkbox" name="days[]" value="7">P</label>
-          </div>
-          <div class="time-row">
-            <div><label>Algus</label><input type="time" name="start_time" value="07:00"></div>
-            <div><label>Lopp</label><input type="time" name="end_time" value="19:00"></div>
-          </div>
-          <p class="hint">Toetatud ka yle oo vahemik (naiteks 22:00-06:00).</p>
-        </div>
-        <button name="add_rule" value="1">Salvesta luba</button>
-      </form>
-    </section>
-    <section class="card">
-      <h2>Load</h2>
-      <ul>
-      <?php foreach ($rules as $r): ?>
-        <li><span class="pill"><?= h($r['subject_type']) ?></span> <?= h($r['subject_value']) ?> | <?= h(formatScheduleLabel((string)$r['schedule'])) ?> | <?= h($r['zone']) ?> | <?= h($r['source']) ?></li>
-      <?php endforeach; ?>
-      </ul>
-    </section>
+  <div class="settings-layout">
+    <aside class="card settings-menu">
+      <a class="menu-link <?= $permitsTab === 'new_permit' ? 'active' : '' ?>" href="?tab=permits&permits_tab=new_permit"><?= h(t('permits_new')) ?></a>
+      <a class="menu-link <?= $permitsTab === 'permits_list' ? 'active' : '' ?>" href="?tab=permits&permits_tab=permits_list"><?= h(t('permits_list')) ?></a>
+      <a class="menu-link <?= $permitsTab === 'exceptions' ? 'active' : '' ?>" href="?tab=permits&permits_tab=exceptions"><?= h(t('permits_exceptions')) ?></a>
+    </aside>
 
-    <section class="card">
-      <h2>Ajapohised erandid</h2>
-      <form method="post">
-        <label>Erandi nimi</label>
-        <input name="exception_name" placeholder="Naiteks: E-L paevane sissepaas ilma loata" required>
-        <label>Tyyp</label>
-        <select name="exception_input_type">
-          <option value="plate">Auto nr</option>
-          <option value="phone">Telefon</option>
-        </select>
-        <label>Ajagraafik</label>
-        <input name="exception_schedule" placeholder="24/7 voi WEEK:1,2,3,4,5,6|TIME:08:00-19:00" required>
-        <label>Tsoon</label>
-        <select name="exception_zone">
-          <option value="parking">parking</option>
-          <option value="service_lobby">service_lobby</option>
-        </select>
-        <label><input type="checkbox" name="exception_enabled" value="1" style="width:auto" checked> Aktiivne</label>
-        <button name="add_exception" value="1">Lisa erand</button>
-      </form>
-      <hr style="margin:14px 0;border:0;border-top:1px solid #dbe2ea">
-      <?php foreach ($exceptions as $ex): ?>
-      <form method="post" style="padding:10px;border:1px solid #dbe2ea;border-radius:10px;margin-bottom:10px">
-        <input type="hidden" name="exception_id" value="<?= h((string)$ex['id']) ?>">
-        <label>Nimi</label>
-        <input name="exception_name" value="<?= h((string)$ex['name']) ?>" required>
-        <label>Tyyp</label>
-        <select name="exception_input_type">
-          <option value="plate" <?= $ex['input_type'] === 'plate' ? 'selected' : '' ?>>Auto nr</option>
-          <option value="phone" <?= $ex['input_type'] === 'phone' ? 'selected' : '' ?>>Telefon</option>
-        </select>
-        <label>Ajagraafik</label>
-        <input name="exception_schedule" value="<?= h((string)$ex['schedule']) ?>" required>
-        <label>Tsoon</label>
-        <select name="exception_zone">
-          <option value="parking" <?= $ex['zone'] === 'parking' ? 'selected' : '' ?>>parking</option>
-          <option value="service_lobby" <?= $ex['zone'] === 'service_lobby' ? 'selected' : '' ?>>service_lobby</option>
-        </select>
-        <label><input type="checkbox" name="exception_enabled" value="1" style="width:auto" <?= ((int)$ex['enabled'] === 1) ? 'checked' : '' ?>> Aktiivne</label>
-        <p class="hint">Siht: ilma loata (<?= h((string)$ex['target']) ?>) | Loodud: <?= h((string)$ex['created_at']) ?></p>
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button style="width:auto" name="save_exception" value="1">Salvesta muudatus</button>
-          <button style="width:auto;background:#b91c1c" name="delete_exception" value="1" onclick="return confirm('Kustutada erand?')">Kustuta</button>
-        </div>
-      </form>
-      <?php endforeach; ?>
-    </section>
+    <div>
+      <?php if ($permitsTab === 'new_permit'): ?>
+      <section class="card">
+        <h2><?= h(t('permits_new_title')) ?></h2>
+        <form method="post" id="ruleForm">
+          <input type="hidden" name="permits_tab" value="new_permit">
+          <label><?= h(t('label_type')) ?></label>
+          <select name="subject_type">
+            <option value="plate"><?= h(t('input_plate')) ?></option>
+            <option value="phone"><?= h(t('input_phone')) ?></option>
+          </select>
+          <label><?= h(t('label_value')) ?></label>
+          <input name="subject_value" placeholder="<?= h(t('placeholder_plate_or_phone')) ?>" required>
+          <label><?= h(t('label_zone')) ?></label>
+          <select name="zone">
+            <option value="parking"><?= h(t('zone_parking')) ?></option>
+            <option value="service_lobby"><?= h(t('zone_service_lobby')) ?></option>
+          </select>
+          <label><input type="checkbox" id="schedule247" name="schedule_247" value="1" checked style="width:auto"> <?= h(t('schedule_247')) ?></label>
+          <div id="customSchedule" style="display:none">
+            <label><?= h(t('label_days')) ?></label>
+            <div class="days">
+              <label class="day"><input type="checkbox" name="days[]" value="1">E</label>
+              <label class="day"><input type="checkbox" name="days[]" value="2">T</label>
+              <label class="day"><input type="checkbox" name="days[]" value="3">K</label>
+              <label class="day"><input type="checkbox" name="days[]" value="4">N</label>
+              <label class="day"><input type="checkbox" name="days[]" value="5">R</label>
+              <label class="day"><input type="checkbox" name="days[]" value="6">L</label>
+              <label class="day"><input type="checkbox" name="days[]" value="7">P</label>
+            </div>
+            <div class="time-row">
+              <div><label><?= h(t('label_start')) ?></label><input type="time" name="start_time" value="07:00"></div>
+              <div><label><?= h(t('label_end')) ?></label><input type="time" name="end_time" value="19:00"></div>
+            </div>
+            <p class="hint"><?= h(t('hint_overnight_supported')) ?></p>
+          </div>
+          <button name="add_rule" value="1"><?= h(t('btn_save_permit')) ?></button>
+        </form>
+      </section>
+      <?php endif; ?>
+
+      <?php if ($permitsTab === 'permits_list'): ?>
+      <section class="card">
+        <h2><?= h(t('permits_list')) ?></h2>
+        <ul>
+        <?php foreach ($rules as $r): ?>
+          <li><span class="pill"><?= h($r['subject_type']) ?></span> <?= h($r['subject_value']) ?> | <?= h(formatScheduleLabel((string)$r['schedule'])) ?> | <?= h($r['zone']) ?> | <?= h($r['source']) ?></li>
+        <?php endforeach; ?>
+        </ul>
+      </section>
+      <?php endif; ?>
+
+      <?php if ($permitsTab === 'exceptions'): ?>
+      <section class="card">
+        <h2><?= h(t('permits_exceptions')) ?></h2>
+        <form method="post">
+          <input type="hidden" name="permits_tab" value="exceptions">
+          <label><?= h(t('label_exception_name')) ?></label>
+          <input name="exception_name" placeholder="<?= h(t('placeholder_exception_name')) ?>" required>
+          <label><?= h(t('label_type')) ?></label>
+          <select name="exception_input_type">
+            <option value="plate"><?= h(t('input_plate')) ?></option>
+            <option value="phone"><?= h(t('input_phone')) ?></option>
+          </select>
+          <label><?= h(t('label_schedule')) ?></label>
+          <input name="exception_schedule" placeholder="<?= h(t('placeholder_exception_schedule')) ?>" required>
+          <label><?= h(t('label_zone')) ?></label>
+          <select name="exception_zone">
+            <option value="parking"><?= h(t('zone_parking')) ?></option>
+            <option value="service_lobby"><?= h(t('zone_service_lobby')) ?></option>
+          </select>
+          <label><input type="checkbox" name="exception_enabled" value="1" style="width:auto" checked> <?= h(t('label_active')) ?></label>
+          <button name="add_exception" value="1"><?= h(t('btn_add_exception')) ?></button>
+        </form>
+        <hr style="margin:14px 0;border:0;border-top:1px solid #dbe2ea">
+        <?php foreach ($exceptions as $ex): ?>
+        <form method="post" style="padding:10px;border:1px solid #dbe2ea;border-radius:10px;margin-bottom:10px">
+          <input type="hidden" name="permits_tab" value="exceptions">
+          <input type="hidden" name="exception_id" value="<?= h((string)$ex['id']) ?>">
+          <label><?= h(t('label_name')) ?></label>
+          <input name="exception_name" value="<?= h((string)$ex['name']) ?>" required>
+          <label><?= h(t('label_type')) ?></label>
+          <select name="exception_input_type">
+            <option value="plate" <?= $ex['input_type'] === 'plate' ? 'selected' : '' ?>><?= h(t('input_plate')) ?></option>
+            <option value="phone" <?= $ex['input_type'] === 'phone' ? 'selected' : '' ?>><?= h(t('input_phone')) ?></option>
+          </select>
+          <label><?= h(t('label_schedule')) ?></label>
+          <input name="exception_schedule" value="<?= h((string)$ex['schedule']) ?>" required>
+          <label><?= h(t('label_zone')) ?></label>
+          <select name="exception_zone">
+            <option value="parking" <?= $ex['zone'] === 'parking' ? 'selected' : '' ?>><?= h(t('zone_parking')) ?></option>
+            <option value="service_lobby" <?= $ex['zone'] === 'service_lobby' ? 'selected' : '' ?>><?= h(t('zone_service_lobby')) ?></option>
+          </select>
+          <label><input type="checkbox" name="exception_enabled" value="1" style="width:auto" <?= ((int)$ex['enabled'] === 1) ? 'checked' : '' ?>> <?= h(t('label_active')) ?></label>
+          <p class="hint"><?= h(t('label_target_no_permit')) ?> (<?= h((string)$ex['target']) ?>) | <?= h(t('label_created')) ?>: <?= h((string)$ex['created_at']) ?></p>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button style="width:auto" name="save_exception" value="1"><?= h(t('btn_save_changes')) ?></button>
+            <button style="width:auto;background:#b91c1c" name="delete_exception" value="1" onclick="return confirm('<?= h(t('confirm_delete_exception')) ?>')"><?= h(t('btn_delete')) ?></button>
+          </div>
+        </form>
+        <?php endforeach; ?>
+      </section>
+      <?php endif; ?>
+    </div>
   </div>
   <?php endif; ?>
 
   <?php if ($tab === 'settings'): ?>
-  <div class="grid">
-    <section class="card">
-      <h2>Test case</h2>
-      <form method="post">
-        <label>Tyyp</label>
-        <select name="test_type">
-          <option value="plate">Auto nr</option>
-          <option value="phone">Telefon</option>
-        </select>
-        <label>Vaartus</label>
-        <input name="test_value" placeholder="ABC123 voi +3725550001" required>
-        <label><input type="checkbox" name="test_has_reservation" value="1" style="width:auto"> has_reservation = true</label>
-        <button name="test_case" value="1">Kaivita test case</button>
-      </form>
-      <?php if (is_array($testCaseResult)): ?>
-      <p class="hint">Vastus:</p>
-      <pre style="white-space:pre-wrap;background:#0b1020;color:#dbeafe;padding:10px;border-radius:10px;overflow:auto;"><?= h(json_encode($testCaseResult, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT)) ?></pre>
+  <div class="settings-layout">
+    <aside class="card settings-menu">
+      <a class="menu-link <?= $settingsTab === 'test_case' ? 'active' : '' ?>" href="?tab=settings&settings_tab=test_case"><?= h(t('settings_test_case')) ?></a>
+      <a class="menu-link <?= $settingsTab === 'android_monitor' ? 'active' : '' ?>" href="?tab=settings&settings_tab=android_monitor"><?= h(t('settings_android_monitor')) ?></a>
+      <a class="menu-link <?= $settingsTab === 'ampron_led' ? 'active' : '' ?>" href="?tab=settings&settings_tab=ampron_led"><?= h(t('settings_ampron_led')) ?></a>
+      <a class="menu-link <?= $settingsTab === 'shelly' ? 'active' : '' ?>" href="?tab=settings&settings_tab=shelly"><?= h(t('settings_shelly_relay')) ?></a>
+      <a class="menu-link <?= $settingsTab === 'sip_agent' ? 'active' : '' ?>" href="?tab=settings&settings_tab=sip_agent"><?= h(t('sip_title')) ?></a>
+    </aside>
+
+    <div>
+      <?php if ($settingsTab === 'test_case'): ?>
+      <section class="card">
+        <h2><?= h(t('settings_test_case')) ?></h2>
+        <form method="post">
+          <input type="hidden" name="settings_tab" value="test_case">
+          <label><?= h(t('label_type')) ?></label>
+          <select name="test_type">
+            <option value="plate"><?= h(t('input_plate')) ?></option>
+            <option value="phone"><?= h(t('input_phone')) ?></option>
+          </select>
+          <label><?= h(t('label_value')) ?></label>
+          <input name="test_value" placeholder="<?= h(t('placeholder_test_value')) ?>" required>
+          <label><input type="checkbox" name="test_has_reservation" value="1" style="width:auto"> <?= h(t('label_has_reservation')) ?> = true</label>
+          <button name="test_case" value="1"><?= h(t('btn_run_test_case')) ?></button>
+        </form>
+        <?php if (is_array($testCaseResult)): ?>
+        <p class="hint"><?= h(t('label_response')) ?>:</p>
+        <pre style="white-space:pre-wrap;background:#0b1020;color:#dbeafe;padding:10px;border-radius:10px;overflow:auto;"><?= h(json_encode($testCaseResult, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT)) ?></pre>
+        <?php endif; ?>
+      </section>
       <?php endif; ?>
-    </section>
 
-    <section class="card">
-      <h2>Android monitor</h2>
-      <form method="post">
-        <label>Stand-by tekst</label>
-        <input name="display_standby_text" value="<?= h($displayStandbyText) ?>" required>
-        <label>Tuvastuse ajal tekst</label>
-        <input name="display_detecting_text" value="<?= h($displayDetectingText) ?>" required>
-        <label>Onnestunud tuvastus (parkla)</label>
-        <input name="display_success_parking_text" value="<?= h($displaySuccessParkingText) ?>" required>
-        <label>Onnestunud tuvastus (service lobby)</label>
-        <input name="display_success_service_text" value="<?= h($displaySuccessServiceText) ?>" required>
-        <label>Ebaonnestunud tuvastus</label>
-        <input name="display_failed_text" value="<?= h($displayFailedText) ?>" required>
-        <button name="save_display_monitor" value="1">Salvesta Android monitori seaded</button>
-      </form>
-      <p class="hint">Android monitor loeb neid tekste API endpointist <code>action=display-config</code>.</p>
-    </section>
+      <?php if ($settingsTab === 'android_monitor'): ?>
+      <section class="card">
+        <h2><?= h(t('settings_android_monitor')) ?></h2>
+        <form method="post">
+          <input type="hidden" name="settings_tab" value="android_monitor">
+          <label><?= h(t('label_standby_text')) ?></label>
+          <input name="display_standby_text" value="<?= h($displayStandbyText) ?>" required>
+          <label><?= h(t('label_detecting_text')) ?></label>
+          <input name="display_detecting_text" value="<?= h($displayDetectingText) ?>" required>
+          <label><?= h(t('label_success_parking')) ?></label>
+          <input name="display_success_parking_text" value="<?= h($displaySuccessParkingText) ?>" required>
+          <label><?= h(t('label_success_service_lobby')) ?></label>
+          <input name="display_success_service_text" value="<?= h($displaySuccessServiceText) ?>" required>
+          <label><?= h(t('label_failed_detection')) ?></label>
+          <input name="display_failed_text" value="<?= h($displayFailedText) ?>" required>
+          <button name="save_display_monitor" value="1"><?= h(t('btn_save_android_monitor')) ?></button>
+        </form>
+        <p class="hint"><?= h(t('hint_android_display_config')) ?> <code>action=display-config</code>.</p>
+      </section>
+      <?php endif; ?>
 
-    <section class="card">
-      <h2>Ampron LED ekraan (Service Lobby)</h2>
-      <form method="post">
-        <label><input type="checkbox" name="ampron_enabled" value="1" style="width:auto" <?= $ampronEnabled ? 'checked' : '' ?>> Ampron tugi lubatud</label>
-        <label>Ampron baas URL</label>
-        <input name="ampron_base_url" value="<?= h($ampronBaseUrl) ?>" placeholder="http://DISPLAY_IP:9527 voi http://DISPLAY_IP:9527/mlds">
-        <label>Display ID (id=...)</label>
-        <input name="ampron_display_id" value="<?= h($ampronDisplayId) ?>" placeholder="SERVICE_LOBBY" required>
-        <label>Standby layout</label>
-        <input name="ampron_standby_layout" value="<?= h($ampronStandbyLayout) ?>" placeholder="service_lobby" required>
-        <label>Standby field (area nimi)</label>
-        <input name="ampron_standby_field" value="<?= h($ampronStandbyField) ?>" placeholder="text" required>
-        <label>Standby tekst</label>
-        <input name="ampron_standby_text" value="<?= h($ampronStandbyText) ?>" placeholder="Service Lobby" required>
-        <label>Standby extra query (valikuline)</label>
-        <input name="ampron_standby_extra_query" value="<?= h($ampronStandbyExtraQuery) ?>" placeholder="kiosk=21">
-        <label>Plate layout</label>
-        <input name="ampron_plate_layout" value="<?= h($ampronPlateLayout) ?>" placeholder="vehiclenumber" required>
-        <label>Plate field (area nimi)</label>
-        <input name="ampron_plate_field" value="<?= h($ampronPlateField) ?>" placeholder="plate" required>
-        <label>Plate extra query (valikuline)</label>
-        <input name="ampron_plate_extra_query" value="<?= h($ampronPlateExtraQuery) ?>" placeholder="kiosk=21">
-        <label>HTTP kasutaja (valikuline)</label>
-        <input name="ampron_username" value="<?= h($ampronUsername) ?>" placeholder="admin">
-        <label>HTTP parool (valikuline)</label>
-        <input name="ampron_password" type="password" value="" placeholder="<?= $ampronPassword !== '' ? 'Jata tuhjaks, et vana jaaks alles' : '' ?>">
-        <label>HTTP timeout (sek)</label>
-        <input name="ampron_timeout" value="<?= h($ampronTimeout) ?>" placeholder="3" required>
-        <button name="save_ampron_display" value="1">Salvesta Ampron LED seaded</button>
-      </form>
-      <p class="hint">PLN saadab automaatselt Ampron API-le GET paringu <code>/mlds?id=...&amp;layout=...&amp;FIELD=...</code>.</p>
-      <p class="hint">Kui otsus on <code>allowed + zone=service_lobby</code>, kuvatakse auto number. Muul juhul kuvatakse standby tekst.</p>
-    </section>
+      <?php if ($settingsTab === 'ampron_led'): ?>
+      <section class="card">
+        <h2><?= h(t('ampron_title')) ?></h2>
+        <form method="post">
+          <input type="hidden" name="settings_tab" value="ampron_led">
+          <label><input type="checkbox" name="ampron_enabled" value="1" style="width:auto" <?= $ampronEnabled ? 'checked' : '' ?>> <?= h(t('label_ampron_enabled')) ?></label>
+          <label><?= h(t('label_ampron_base_url')) ?></label>
+          <input name="ampron_base_url" value="<?= h($ampronBaseUrl) ?>" placeholder="http://DISPLAY_IP:9527 voi http://DISPLAY_IP:9527/mlds">
+          <label><?= h(t('label_display_id')) ?></label>
+          <input name="ampron_display_id" value="<?= h($ampronDisplayId) ?>" placeholder="SERVICE_LOBBY" required>
+          <label><?= h(t('label_standby_layout')) ?></label>
+          <input name="ampron_standby_layout" value="<?= h($ampronStandbyLayout) ?>" placeholder="service_lobby" required>
+          <label><?= h(t('label_standby_field')) ?></label>
+          <input name="ampron_standby_field" value="<?= h($ampronStandbyField) ?>" placeholder="text" required>
+          <label><?= h(t('label_standby_text')) ?></label>
+          <input name="ampron_standby_text" value="<?= h($ampronStandbyText) ?>" placeholder="Service Lobby" required>
+          <label><?= h(t('label_standby_extra_query')) ?></label>
+          <input name="ampron_standby_extra_query" value="<?= h($ampronStandbyExtraQuery) ?>" placeholder="kiosk=21">
+          <label><?= h(t('label_plate_layout')) ?></label>
+          <input name="ampron_plate_layout" value="<?= h($ampronPlateLayout) ?>" placeholder="vehiclenumber" required>
+          <label><?= h(t('label_plate_field')) ?></label>
+          <input name="ampron_plate_field" value="<?= h($ampronPlateField) ?>" placeholder="plate" required>
+          <label><?= h(t('label_plate_extra_query')) ?></label>
+          <input name="ampron_plate_extra_query" value="<?= h($ampronPlateExtraQuery) ?>" placeholder="kiosk=21">
+          <label><?= h(t('label_http_user_optional')) ?></label>
+          <input name="ampron_username" value="<?= h($ampronUsername) ?>" placeholder="admin">
+          <label><?= h(t('label_http_password_optional')) ?></label>
+          <input name="ampron_password" type="password" value="" placeholder="<?= $ampronPassword !== '' ? h(t('placeholder_keep_old_password')) : '' ?>">
+          <label><?= h(t('label_http_timeout_seconds')) ?></label>
+          <input name="ampron_timeout" value="<?= h($ampronTimeout) ?>" placeholder="3" required>
+          <button name="save_ampron_display" value="1"><?= h(t('btn_save_ampron_settings')) ?></button>
+        </form>
+        <p class="hint"><?= h(t('hint_ampron_request')) ?> <code>/mlds?id=...&amp;layout=...&amp;FIELD=...</code>.</p>
+        <p class="hint"><?= h(t('hint_ampron_behavior')) ?></p>
+      </section>
+      <?php endif; ?>
 
-    <section class="card">
-      <h2>Shelly relee seadistus</h2>
-      <form method="post">
-        <label>Shelly baas URL</label>
-        <input name="shelly_base_url" value="<?= h($shellyBaseUrl) ?>" placeholder="http://shelly-ip" required>
-        <label>Shelly mode</label>
-        <select name="shelly_mode">
-          <option value="auto" <?= $shellyMode === 'auto' ? 'selected' : '' ?>>auto (proovi RPC, fallback relay)</option>
-          <option value="rpc" <?= $shellyMode === 'rpc' ? 'selected' : '' ?>>rpc (Shelly Pro/Gen2 soovituslik)</option>
-          <option value="relay" <?= $shellyMode === 'relay' ? 'selected' : '' ?>>relay (legacy Gen1)</option>
-        </select>
-        <label>Switch ID / Relay nr</label>
-        <input name="shelly_switch_id" value="<?= h($shellySwitchId) ?>" placeholder="0" required>
-        <label>toggle_after / timer (sek)</label>
-        <input name="shelly_toggle_after" value="<?= h($shellyToggleAfter) ?>" placeholder="1" required>
-        <label>Kasutaja (valikuline)</label>
-        <input name="shelly_username" value="<?= h($shellyUsername) ?>" placeholder="admin">
-        <label>Parool (valikuline)</label>
-        <input name="shelly_password" type="password" value="" placeholder="Jata tuhjaks, et vana jaaks alles">
-        <p class="hint">Shelly Pro 2PM jaoks kasuta tavaliselt: baas URL `http://SEADME_IP`, mode `rpc`, switch id `0` voi `1`.</p>
-        <p class="hint">Kui paroolivaili tuhjaks jaatad, jaab eelmine parool alles.</p>
-        <button name="save_shelly" value="1">Salvesta Shelly seaded</button>
-      </form>
-    </section>
+      <?php if ($settingsTab === 'shelly'): ?>
+      <section class="card">
+        <h2><?= h(t('shelly_title')) ?></h2>
+        <form method="post">
+          <input type="hidden" name="settings_tab" value="shelly">
+          <label><?= h(t('label_shelly_base_url')) ?></label>
+          <input name="shelly_base_url" value="<?= h($shellyBaseUrl) ?>" placeholder="http://shelly-ip" required>
+          <label><?= h(t('label_shelly_mode')) ?></label>
+          <select name="shelly_mode">
+            <option value="auto" <?= $shellyMode === 'auto' ? 'selected' : '' ?>><?= h(t('shelly_mode_auto')) ?></option>
+            <option value="rpc" <?= $shellyMode === 'rpc' ? 'selected' : '' ?>><?= h(t('shelly_mode_rpc')) ?></option>
+            <option value="relay" <?= $shellyMode === 'relay' ? 'selected' : '' ?>><?= h(t('shelly_mode_relay')) ?></option>
+          </select>
+          <label><?= h(t('label_switch_id')) ?></label>
+          <input name="shelly_switch_id" value="<?= h($shellySwitchId) ?>" placeholder="0" required>
+          <label><?= h(t('label_toggle_after_seconds')) ?></label>
+          <input name="shelly_toggle_after" value="<?= h($shellyToggleAfter) ?>" placeholder="1" required>
+          <label><?= h(t('label_username_optional')) ?></label>
+          <input name="shelly_username" value="<?= h($shellyUsername) ?>" placeholder="admin">
+          <label><?= h(t('label_password_optional')) ?></label>
+          <input name="shelly_password" type="password" value="" placeholder="<?= h(t('placeholder_keep_old_password')) ?>">
+          <p class="hint"><?= h(t('hint_shelly_pro')) ?></p>
+          <p class="hint"><?= h(t('hint_password_keep_old')) ?></p>
+          <button name="save_shelly" value="1"><?= h(t('btn_save_shelly_settings')) ?></button>
+        </form>
+      </section>
+      <?php endif; ?>
 
-    <section class="card">
-      <h2>SIP agent</h2>
-      <p class="hint">Staatus: <strong><?= h($sipAgentStatus) ?></strong></p>
-      <form method="post">
-        <label><input type="checkbox" name="sip_agent_enabled" value="1" style="width:auto" <?= $sipAgentEnabled ? 'checked' : '' ?>> SIP agent lubatud</label>
-        <label>Planner API URL (phone-event)</label>
-        <input name="planner_api_url" value="<?= h($plannerApiUrl) ?>" placeholder="https://one.crebit.eu/pln/api.php" required>
-        <label>SIP kasutaja</label>
-        <input name="sip_user" value="<?= h($sipUser) ?>" placeholder="1001" required>
-        <label>SIP parool</label>
-        <input name="sip_password" type="password" value="" placeholder="Jata tuhjaks, et vana jaaks alles">
-        <label>SIP domain/registrar host</label>
-        <input name="sip_domain" value="<?= h($sipDomain) ?>" placeholder="sip.example.com" required>
-        <label>SIP transport</label>
-        <select name="sip_transport">
-          <option value="udp" <?= $sipTransport === 'udp' ? 'selected' : '' ?>>udp</option>
-          <option value="tcp" <?= $sipTransport === 'tcp' ? 'selected' : '' ?>>tcp</option>
-          <option value="tls" <?= $sipTransport === 'tls' ? 'selected' : '' ?>>tls</option>
-        </select>
-        <label>Display name (valikuline)</label>
-        <input name="sip_display_name" value="<?= h($sipDisplayName) ?>" placeholder="Planner Gate">
-        <label>Outbound proxy host (valikuline)</label>
-        <input name="sip_outbound" value="<?= h($sipOutbound) ?>" placeholder="proxy.example.com">
-        <label>Registreerimisintervall (sek)</label>
-        <input name="sip_regint" value="<?= h($sipRegint) ?>" placeholder="300">
-        <button name="save_sip_agent" value="1">Salvesta SIP agendi seaded</button>
-      </form>
-      <form method="post" style="margin-top:10px">
-        <button name="sip_agent_action" value="start">Kaivita SIP agent</button>
-        <button name="sip_agent_action" value="restart">Restart SIP agent</button>
-        <button name="sip_agent_action" value="stop">Peata SIP agent</button>
-      </form>
-    </section>
-
+      <?php if ($settingsTab === 'sip_agent'): ?>
+      <section class="card">
+        <h2><?= h(t('sip_title')) ?></h2>
+        <p class="hint"><?= h(t('label_status')) ?>: <strong><?= h($sipAgentStatus) ?></strong></p>
+        <form method="post">
+          <input type="hidden" name="settings_tab" value="sip_agent">
+          <label><input type="checkbox" name="sip_agent_enabled" value="1" style="width:auto" <?= $sipAgentEnabled ? 'checked' : '' ?>> <?= h(t('label_sip_enabled')) ?></label>
+          <label><?= h(t('label_planner_api_url_phone_event')) ?></label>
+          <input name="planner_api_url" value="<?= h($plannerApiUrl) ?>" placeholder="https://one.crebit.eu/pln/api.php" required>
+          <label><?= h(t('label_sip_user')) ?></label>
+          <input name="sip_user" value="<?= h($sipUser) ?>" placeholder="1001" required>
+          <label><?= h(t('label_sip_password')) ?></label>
+          <input name="sip_password" type="password" value="" placeholder="<?= h(t('placeholder_keep_old_password')) ?>">
+          <label><?= h(t('label_sip_domain')) ?></label>
+          <input name="sip_domain" value="<?= h($sipDomain) ?>" placeholder="sip.example.com" required>
+          <label><?= h(t('label_sip_transport')) ?></label>
+          <select name="sip_transport">
+            <option value="udp" <?= $sipTransport === 'udp' ? 'selected' : '' ?>>udp</option>
+            <option value="tcp" <?= $sipTransport === 'tcp' ? 'selected' : '' ?>>tcp</option>
+            <option value="tls" <?= $sipTransport === 'tls' ? 'selected' : '' ?>>tls</option>
+          </select>
+          <label><?= h(t('label_display_name_optional')) ?></label>
+          <input name="sip_display_name" value="<?= h($sipDisplayName) ?>" placeholder="Planner Gate">
+          <label><?= h(t('label_outbound_proxy_optional')) ?></label>
+          <input name="sip_outbound" value="<?= h($sipOutbound) ?>" placeholder="proxy.example.com">
+          <label><?= h(t('label_registration_interval_seconds')) ?></label>
+          <input name="sip_regint" value="<?= h($sipRegint) ?>" placeholder="300">
+          <button name="save_sip_agent" value="1"><?= h(t('btn_save_sip_settings')) ?></button>
+        </form>
+        <form method="post" style="margin-top:10px">
+          <input type="hidden" name="settings_tab" value="sip_agent">
+          <button name="sip_agent_action" value="start"><?= h(t('btn_start_sip_agent')) ?></button>
+          <button name="sip_agent_action" value="restart"><?= h(t('btn_restart_sip_agent')) ?></button>
+          <button name="sip_agent_action" value="stop"><?= h(t('btn_stop_sip_agent')) ?></button>
+        </form>
+      </section>
+      <?php endif; ?>
+    </div>
   </div>
   <?php endif; ?>
 
@@ -921,22 +1106,22 @@ if ($sipAgentStatus === '') {
   <div class="grid">
     <?php if ($user['role'] === 'admin'): ?>
     <section class="card">
-      <h2>Lisa kasutaja</h2>
+      <h2><?= h(t('users_add')) ?></h2>
       <form method="post">
-        <label>Kasutajanimi</label><input name="username" required>
-        <label>Parool</label><input name="password" type="password" required>
-        <label>Roll</label>
+        <label><?= h(t('username')) ?></label><input name="username" required>
+        <label><?= h(t('password')) ?></label><input name="password" type="password" required>
+        <label><?= h(t('label_role')) ?></label>
         <select name="role">
           <option value="viewer">viewer</option>
           <option value="operator">operator</option>
           <option value="admin">admin</option>
         </select>
-        <button name="add_user" value="1">Lisa kasutaja</button>
+        <button name="add_user" value="1"><?= h(t('btn_add_user')) ?></button>
       </form>
     </section>
     <?php endif; ?>
     <section class="card">
-      <h2>Kasutajate nimekiri</h2>
+      <h2><?= h(t('users_list')) ?></h2>
       <ul>
       <?php foreach ($users as $u): ?>
         <li><?= h($u['username']) ?> | <?= h($u['role']) ?> | <?= h($u['created_at']) ?></li>
@@ -948,19 +1133,19 @@ if ($sipAgentStatus === '') {
 
   <?php if ($tab === 'logs'): ?>
   <section class="card">
-    <h2>Sisenemiste logi</h2>
-    <p class="muted">Leht <?= h((string)$logsPage) ?> / <?= h((string)$logsTotalPages) ?>, kokku <?= h((string)$logsTotal) ?> kirjet</p>
+    <h2><?= h(t('logs_title')) ?></h2>
+    <p class="muted"><?= h(tr('logs_pagination_summary', ['page' => (string)$logsPage, 'total_pages' => (string)$logsTotalPages, 'total' => (string)$logsTotal])) ?></p>
     <ul>
     <?php foreach ($logEntries as $e): ?>
-      <li><?= h($e['created_at']) ?> - <?= h($e['input_type']) ?>:<?= h($e['input_value']) ?> => <?= $e['allowed'] ? 'ALLOWED' : 'DENIED' ?> (<?= h($e['reason']) ?>)</li>
+      <li><?= h($e['created_at']) ?> - <?= h($e['input_type']) ?>:<?= h($e['input_value']) ?> => <?= h(decisionLabel((int)$e['allowed'] === 1)) ?> (<?= h(reasonLabel((string)($e['reason'] ?? ''))) ?>)</li>
     <?php endforeach; ?>
     </ul>
     <div style="display:flex;gap:8px;margin-top:12px">
       <?php if ($logsPage > 1): ?>
-        <a class="tab" href="?tab=logs&page=<?= h((string)($logsPage - 1)) ?>">Eelmine</a>
+        <a class="tab" href="?tab=logs&page=<?= h((string)($logsPage - 1)) ?>"><?= h(t('btn_previous')) ?></a>
       <?php endif; ?>
       <?php if ($logsPage < $logsTotalPages): ?>
-        <a class="tab" href="?tab=logs&page=<?= h((string)($logsPage + 1)) ?>">Jargmine</a>
+        <a class="tab" href="?tab=logs&page=<?= h((string)($logsPage + 1)) ?>"><?= h(t('btn_next')) ?></a>
       <?php endif; ?>
     </div>
   </section>

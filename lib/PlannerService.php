@@ -36,20 +36,20 @@ class PlannerService
             if ($exception) {
                 $zone = (string)($exception['zone'] ?? 'parking');
                 $this->triggerGateOpen();
-                $reason = 'Ajapohine erand: ' . (string)($exception['name'] ?? 'nimetu');
+                $reason = 'exception_time_based|' . (string)($exception['name'] ?? 'unnamed');
                 return $this->logDecision($type, $value, true, $zone, $reason);
             }
-            return $this->logDecision($type, $value, false, null, 'Luba puudub');
+            return $this->logDecision($type, $value, false, null, 'permit_missing');
         }
 
         if (!$this->isScheduleAllowed($rule['schedule'])) {
-            return $this->logDecision($type, $value, false, null, 'Luba ei kehti sellel ajal');
+            return $this->logDecision($type, $value, false, null, 'permit_outside_schedule');
         }
 
         $zone = $hasReservation ? 'service_lobby' : $rule['zone'];
         $this->triggerGateOpen();
 
-        return $this->logDecision($type, $value, true, $zone, 'Värav avatud');
+        return $this->logDecision($type, $value, true, $zone, 'gate_opened');
     }
 
     private function findMatchingException(string $type, string $value): ?array

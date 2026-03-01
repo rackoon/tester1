@@ -1,0 +1,26 @@
+<resources>
+    <string name="app_name">Planner Display</string>
+    <string name="monitor_standby">Ootan andmeid...</string>
+    <string name="monitor_detecting">Tuvastus kaib...</string>
+    <string name="monitor_success_parking">Suuna parklasse</string>
+    <string name="monitor_success_service">Suuna Service Lobby alale</string>
+    <string name="monitor_failed">Sisenemine keelatud</string>
+    <string name="hint_service_lobby">Suuna klient Service Lobby alale</string>
+    <string name="hint_parking">Suuna klient parklasse</string>
+    <string name="hint_contact_admin">Palun votke uhendust administraatoriga</string>
+    <string name="hint_detecting">Tuvastan sisenejat...</string>
+    <string name="hint_connected">Pusiyhendus planner serveriga</string>
+    <string name="hint_refreshing">Uuendan infot iga 2 sekundi jarel</string>
+    <string name="conn_establishing">Yhendus luuakse...</string>
+    <string name="conn_connecting">Yhendun</string>
+    <string name="conn_connected">Yhendatud</string>
+    <string name="conn_sse_fallback">SSE puudub, kasutan feed fallbacki</string>
+    <string name="conn_feed_connected">Yhendatud (feed fallback)</string>
+    <string name="conn_feed_error">Feed fallbacki viga, proovin uuesti...</string>
+    <string name="conn_restoring">Yhendus katkes, taastan...</string>
+    <string name="conn_check_url">Kontrolli serveri URL-i ja vorku</string>
+    <string name="cfg_save">Salvesta</string>
+    <string name="cfg_cancel">Loobu</string>
+    <string name="cfg_title">Planner serveri URL</string>
+    <string name="cfg_label">Naide: https://one.crebit.eu/pln/api.php</string>
+</resources>

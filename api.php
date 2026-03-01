@@ -61,7 +61,7 @@ $payload = $raw ? json_decode($raw, true) : [];
 
 if (!is_array($payload)) {
     http_response_code(400);
-    echo json_encode(['error' => 'Vale JSON']);
+    echo json_encode(['error' => 'invalid_json', 'message' => 'Invalid JSON body']);
     exit;
 }
 
@@ -163,5 +163,5 @@ switch ($path) {
         exit;
     default:
         http_response_code(404);
-        echo json_encode(['error' => 'Tundmatu action']);
+        echo json_encode(['error' => 'unknown_action', 'message' => 'Unknown action']);
 }

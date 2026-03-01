@@ -61,6 +61,27 @@ private data class MonitorTexts(
     val failedText: String,
 )
 
+private data class UiTexts(
+    val hintServiceLobby: String,
+    val hintParking: String,
+    val hintContactAdmin: String,
+    val hintDetecting: String,
+    val hintConnected: String,
+    val hintRefreshing: String,
+    val connEstablishing: String,
+    val connConnecting: String,
+    val connConnected: String,
+    val connSseFallback: String,
+    val connFeedConnected: String,
+    val connFeedError: String,
+    val connRestoring: String,
+    val connCheckUrl: String,
+    val cfgSave: String,
+    val cfgCancel: String,
+    val cfgTitle: String,
+    val cfgLabel: String,
+)
+
 class MainActivity : ComponentActivity() {
     private val httpClient: OkHttpClient by lazy {
         OkHttpClient.Builder()
@@ -91,14 +112,15 @@ private fun KioskScreen(client: OkHttpClient) {
     var showConfig by remember { mutableStateOf(false) }
     var baseUrl by remember { mutableStateOf(loadBaseUrl(context)) }
     var editUrl by remember { mutableStateOf(baseUrl) }
-    var monitorTexts by remember { mutableStateOf(defaultMonitorTexts()) }
+    var monitorTexts by remember { mutableStateOf(defaultMonitorTexts(context)) }
+    val uiTexts = remember { defaultUiTexts(context) }
     var state by remember {
         mutableStateOf(
             DisplayState(
                 message = monitorTexts.standbyText,
-                hint = "Pusiyhendus planner serveriga",
+                hint = uiTexts.hintConnected,
                 color = Color(0xFF1F2937),
-                connection = "Yhendus luuakse...",
+                connection = uiTexts.connEstablishing,
             )
         )
     }
@@ -116,7 +138,7 @@ private fun KioskScreen(client: OkHttpClient) {
         var lastDisplayAtMs = 0L
 
         fun applyMessage(status: String?, message: String) {
-            val mapped = mapMessage(status, message, monitorTexts)
+            val mapped = mapMessage(status, message, monitorTexts, uiTexts)
             state = mapped.copy(connection = state.connection)
         }
 
@@ -131,15 +153,15 @@ private fun KioskScreen(client: OkHttpClient) {
                         val root = JSONObject(body)
                         val cfg = root.optJSONObject("config") ?: return@use
                         val loaded = MonitorTexts(
-                            standbyText = cfg.optString("standby_text", "Ootan andmeid..."),
-                            detectingText = cfg.optString("detecting_text", "Tuvastus kaib..."),
-                            successParkingText = cfg.optString("success_parking_text", "Suunata parklasse"),
-                            successServiceText = cfg.optString("success_service_text", "Suunata Service Lobby alale"),
-                            failedText = cfg.optString("failed_text", "Sisenemine keelatud"),
+                            standbyText = cfg.optString("standby_text", monitorTexts.standbyText),
+                            detectingText = cfg.optString("detecting_text", monitorTexts.detectingText),
+                            successParkingText = cfg.optString("success_parking_text", monitorTexts.successParkingText),
+                            successServiceText = cfg.optString("success_service_text", monitorTexts.successServiceText),
+                            failedText = cfg.optString("failed_text", monitorTexts.failedText),
                         )
                         withContext(Dispatchers.Main) {
                             monitorTexts = loaded
-                            if (state.message.isBlank() || state.message == "Ootan andmeid...") {
+                            if (state.message.isBlank() || state.message == monitorTexts.standbyText) {
                                 applyMessage("standby", loaded.standbyText)
                             }
                         }
@@ -150,7 +172,7 @@ private fun KioskScreen(client: OkHttpClient) {
 
         fun startPolling() {
             if (pollJob != null) return
-            state = state.copy(connection = "SSE puudub, kasutan feed fallbacki")
+            state = state.copy(connection = uiTexts.connSseFallback)
             pollJob = scope.launch(Dispatchers.IO) {
                 while (isActive && !closedByUs) {
                     runCatching {
@@ -171,12 +193,12 @@ private fun KioskScreen(client: OkHttpClient) {
                                 } else {
                                     applyMessage(null, msg)
                                 }
-                                state = state.copy(connection = "Yhendatud (feed fallback)")
+                                state = state.copy(connection = uiTexts.connFeedConnected)
                             }
                         }
                     }.onFailure {
                         withContext(Dispatchers.Main) {
-                            state = state.copy(connection = "Feed fallbacki viga, proovin uuesti...")
+                            state = state.copy(connection = uiTexts.connFeedError)
                         }
                     }
                     delay(1000)
@@ -196,7 +218,7 @@ private fun KioskScreen(client: OkHttpClient) {
         }
 
         connect = {
-            state = state.copy(connection = "Yhendun: $streamUrl")
+            state = state.copy(connection = "${uiTexts.connConnecting}: $streamUrl")
             applyMessage("detecting", monitorTexts.detectingText)
             source = factory.newEventSource(
                 Request.Builder().url(streamUrl).build(),
@@ -204,7 +226,7 @@ private fun KioskScreen(client: OkHttpClient) {
                     override fun onOpen(eventSource: EventSource, response: Response) {
                         loadMonitorConfig()
                         applyMessage("standby", monitorTexts.standbyText)
-                        state = state.copy(connection = "Yhendatud")
+                        state = state.copy(connection = uiTexts.connConnected)
                     }
 
                     override fun onEvent(
@@ -223,7 +245,7 @@ private fun KioskScreen(client: OkHttpClient) {
                             } else {
                                 applyMessage(null, message)
                             }
-                            state = state.copy(connection = "Yhendatud")
+                            state = state.copy(connection = uiTexts.connConnected)
                         } else if (type == "ping") {
                             val now = System.currentTimeMillis()
                             if (now - lastDisplayAtMs > 6000) {
@@ -248,8 +270,8 @@ private fun KioskScreen(client: OkHttpClient) {
                         }
                         applyMessage("detecting", monitorTexts.detectingText)
                         state = state.copy(
-                            hint = "Kontrolli serveri URL-i ja vorku",
-                            connection = "Yhendus katkes, taastan...",
+                            hint = uiTexts.connCheckUrl,
+                            connection = uiTexts.connRestoring,
                         )
                         scheduleReconnect()
                     }
@@ -282,8 +304,8 @@ private fun KioskScreen(client: OkHttpClient) {
                 color = Color(0xFFE5E7EB),
                 fontSize = 16.sp,
                 modifier = Modifier.clickable {
-                    editUrl = baseUrl
-                    showConfig = true
+                            editUrl = baseUrl
+                            showConfig = true
                 },
             )
         }
@@ -313,57 +335,57 @@ private fun KioskScreen(client: OkHttpClient) {
                     baseUrl = normalized
                     saveBaseUrl(context, normalized)
                     showConfig = false
-                }) { Text("Salvesta") }
+                }) { Text(uiTexts.cfgSave) }
             },
-            dismissButton = { Button(onClick = { showConfig = false }) { Text("Loobu") } },
-            title = { Text("Planner serveri URL") },
+            dismissButton = { Button(onClick = { showConfig = false }) { Text(uiTexts.cfgCancel) } },
+            title = { Text(uiTexts.cfgTitle) },
             text = {
                 OutlinedTextField(
                     value = editUrl,
                     onValueChange = { editUrl = it },
-                    label = { Text("Naide: https://one.crebit.eu/pln/api.php") },
+                    label = { Text(uiTexts.cfgLabel) },
                 )
             },
         )
     }
 }
 
-private fun mapMessage(status: String?, message: String, texts: MonitorTexts): DisplayState {
+private fun mapMessage(status: String?, message: String, texts: MonitorTexts, ui: UiTexts): DisplayState {
     val normalized = status?.trim().orEmpty()
     return when {
         normalized == "success_service" || message.trim() == texts.successServiceText -> DisplayState(
             message = if (message.isBlank()) texts.successServiceText else message,
-            hint = "Suuna klient Service Lobby alale",
+            hint = ui.hintServiceLobby,
             color = Color(0xFFB91C1C),
         )
 
         normalized == "success_parking" || message.trim() == texts.successParkingText -> DisplayState(
             message = if (message.isBlank()) texts.successParkingText else message,
-            hint = "Suuna klient parklasse",
+            hint = ui.hintParking,
             color = Color(0xFF166534),
         )
 
         normalized == "failed" || message.trim() == texts.failedText -> DisplayState(
             message = if (message.isBlank()) texts.failedText else message,
-            hint = "Palun võtke ühendust administraatoriga",
+            hint = ui.hintContactAdmin,
             color = Color(0xFF374151),
         )
 
         normalized == "detecting" || message.trim() == texts.detectingText -> DisplayState(
             message = if (message.isBlank()) texts.detectingText else message,
-            hint = "Tuvastan sisenejat...",
+            hint = ui.hintDetecting,
             color = Color(0xFF1D4ED8),
         )
 
         normalized == "standby" || message.trim() == texts.standbyText -> DisplayState(
             message = if (message.isBlank()) texts.standbyText else message,
-            hint = "Pusiyhendus planner serveriga",
+            hint = ui.hintConnected,
             color = Color(0xFF1F2937),
         )
 
         else -> DisplayState(
             message = message,
-            hint = "Uuendan infot iga 2 sekundi järel",
+            hint = ui.hintRefreshing,
             color = Color(0xFF1F2937),
         )
     }
@@ -429,10 +451,31 @@ private fun deriveDisplayMessage(item: JSONObject, texts: MonitorTexts): String 
     }
 }
 
-private fun defaultMonitorTexts(): MonitorTexts = MonitorTexts(
-    standbyText = "Ootan andmeid...",
-    detectingText = "Tuvastus kaib...",
-    successParkingText = "Suunata parklasse",
-    successServiceText = "Suunata Service Lobby alale",
-    failedText = "Sisenemine keelatud",
+private fun defaultMonitorTexts(context: Context): MonitorTexts = MonitorTexts(
+    standbyText = context.getString(R.string.monitor_standby),
+    detectingText = context.getString(R.string.monitor_detecting),
+    successParkingText = context.getString(R.string.monitor_success_parking),
+    successServiceText = context.getString(R.string.monitor_success_service),
+    failedText = context.getString(R.string.monitor_failed),
+)
+
+private fun defaultUiTexts(context: Context): UiTexts = UiTexts(
+    hintServiceLobby = context.getString(R.string.hint_service_lobby),
+    hintParking = context.getString(R.string.hint_parking),
+    hintContactAdmin = context.getString(R.string.hint_contact_admin),
+    hintDetecting = context.getString(R.string.hint_detecting),
+    hintConnected = context.getString(R.string.hint_connected),
+    hintRefreshing = context.getString(R.string.hint_refreshing),
+    connEstablishing = context.getString(R.string.conn_establishing),
+    connConnecting = context.getString(R.string.conn_connecting),
+    connConnected = context.getString(R.string.conn_connected),
+    connSseFallback = context.getString(R.string.conn_sse_fallback),
+    connFeedConnected = context.getString(R.string.conn_feed_connected),
+    connFeedError = context.getString(R.string.conn_feed_error),
+    connRestoring = context.getString(R.string.conn_restoring),
+    connCheckUrl = context.getString(R.string.conn_check_url),
+    cfgSave = context.getString(R.string.cfg_save),
+    cfgCancel = context.getString(R.string.cfg_cancel),
+    cfgTitle = context.getString(R.string.cfg_title),
+    cfgLabel = context.getString(R.string.cfg_label),
 )

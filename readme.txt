@@ -32,3 +32,9 @@ Ampron LED seadistus (Seaded -> Ampron LED ekraan):
 - Määra display ID, standby layout/field/text ja plate layout/field
 - Kui otsus on allowed + zone=service_lobby, saadab PLN plate väärtuse Amproni ekraanile
 - Muudel juhtudel saadab PLN standby teksti (vaikimisi "Service Lobby")
+
+Mitmekeelsus:
+- PLN admin toetab keeli: et, en, fi, sv, lv, lt
+- Keelt saab vahetada admini ylaribal (salvestub cookie-sse)
+- LPR admin toetab keeli: et, en, fi, sv, lv, lt
+- Android monitor kasutab locale-pohiseid `strings.xml` faile
